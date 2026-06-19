@@ -1,0 +1,23 @@
+# Xcode / macOS
+.DS_Store
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Package.resolved
+
+# Secrets / environment-specific config (never commit real keys)
+Secrets.plist
+A Seat Awaits/Secrets.plist
+*.local.xcconfig
