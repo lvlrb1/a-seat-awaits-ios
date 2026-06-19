@@ -16,10 +16,18 @@ nonisolated struct NewEventDTO: Encodable, Sendable {
     let description: String?
 }
 
-/// Patch to mark an invitation accepted.
-nonisolated struct InviteStatusPatch: Encodable, Sendable {
-    let status: String
+/// Encodable params for the `accept_event_invitation` RPC.
+nonisolated struct AcceptInviteParams: Encodable, Sendable {
+    let p_token: String
 }
+
+/// Encodable params for the `event_seating_summary` RPC.
+nonisolated struct SeatingSummaryParams: Encodable, Sendable {
+    let p_event_ids: [String]
+}
+
+/// Empty body for RPCs that take no arguments (PostgREST still expects `{}`).
+nonisolated struct EmptyRPCParams: Encodable, Sendable {}
 
 @MainActor
 @Observable
@@ -31,16 +39,6 @@ final class EventStore {
     private(set) var pendingInvites: [EventInvitation] = []
     private(set) var isLoading = false
     var errorMessage: String?
-
-    /// Lightweight row used to compute per-event seating progress.
-    private nonisolated struct GuestProgressRow: Decodable, Sendable {
-        let eventId: String
-        let tableId: String?
-        enum CodingKeys: String, CodingKey {
-            case eventId = "event_id"
-            case tableId = "table_id"
-        }
-    }
 
     init(supabase: SupabaseClient) {
         self.supabase = supabase
@@ -74,21 +72,20 @@ final class EventStore {
         await loadInvites(myEmail: myEmail)
     }
 
-    /// Aggregates seating progress for every event the planner can see in a
-    /// single query (RLS scopes the rows to those they own/share).
+    /// Aggregates seating progress for every visible event server-side via the
+    /// `event_seating_summary` RPC (counts + capacity computed in one call, RLS
+    /// scopes the rows to those the planner owns/shares).
     func loadProgress() async {
+        guard !events.isEmpty else { progress = [:]; return }
         do {
-            let rows = try await supabase.select(
-                "guests",
-                query: [URLQueryItem(name: "select", value: "event_id,table_id")],
-                as: [GuestProgressRow].self
+            let rows = try await supabase.rpc(
+                "event_seating_summary",
+                params: SeatingSummaryParams(p_event_ids: events.map(\.id)),
+                as: [EventSeatingSummary].self
             )
             var map: [String: EventProgress] = [:]
             for row in rows {
-                var p = map[row.eventId] ?? EventProgress(seated: 0, total: 0)
-                p.total += 1
-                if row.tableId != nil { p.seated += 1 }
-                map[row.eventId] = p
+                map[row.eventId] = EventProgress(seated: row.seatedGuests, total: row.totalGuests)
             }
             progress = map
         } catch {
@@ -96,43 +93,30 @@ final class EventStore {
         }
     }
 
-    /// Best-effort fetch of pending invitations addressed to the current user.
+    /// Fetches the pending invitations addressed to the current user via the
+    /// `list_my_pending_invites` RPC, which scopes rows to `auth.email()`.
     func loadInvites(myEmail: String?) async {
         guard let myEmail, !myEmail.isEmpty else { pendingInvites = []; return }
-        let base = [
-            URLQueryItem(name: "invitee_email", value: "eq.\(myEmail)"),
-            URLQueryItem(name: "status", value: "eq.pending"),
-        ]
-        // Try the rich query (event + inviter names); fall back to a plain read
-        // if the embeds are blocked by RLS.
         do {
-            pendingInvites = try await supabase.select(
-                "event_invitations",
-                query: [URLQueryItem(name: "select", value: "*,event:events(name),inviter:users(full_name)")] + base,
+            pendingInvites = try await supabase.rpc(
+                "list_my_pending_invites",
+                params: EmptyRPCParams(),
                 as: [EventInvitation].self
             )
         } catch {
-            do {
-                pendingInvites = try await supabase.select(
-                    "event_invitations",
-                    query: [URLQueryItem(name: "select", value: "*")] + base,
-                    as: [EventInvitation].self
-                )
-            } catch {
-                pendingInvites = []
-            }
+            pendingInvites = []
         }
     }
 
-    /// Best-effort accept: marks the invitation accepted. (Server-side share
-    /// creation is handled by the backend trigger / web flow.)
+    /// Accepts an invitation via the `accept_event_invitation` RPC, which
+    /// validates the invitee and creates the `event_shares` row server-side,
+    /// then refreshes the dashboard so the newly shared event appears.
     func acceptInvite(_ invite: EventInvitation) async {
         do {
-            _ = try await supabase.update(
-                "event_invitations",
-                values: InviteStatusPatch(status: "accepted"),
-                query: [URLQueryItem(name: "id", value: "eq.\(invite.id)")],
-                returning: [EventInvitation].self
+            _ = try await supabase.rpc(
+                "accept_event_invitation",
+                params: AcceptInviteParams(p_token: invite.token),
+                as: String.self
             )
             pendingInvites.removeAll { $0.id == invite.id }
             await load()

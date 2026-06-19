@@ -41,6 +41,11 @@ nonisolated struct TablePositionPatch: Encodable, Sendable {
     let position_y: Double
 }
 
+/// Encodable params for the `event_collaborators` RPC.
+nonisolated struct EventCollaboratorsParams: Encodable, Sendable {
+    let p_event_id: String
+}
+
 @MainActor
 @Observable
 final class SeatingStore {
@@ -50,6 +55,7 @@ final class SeatingStore {
     private(set) var guests: [Guest] = []
     private(set) var tables: [SeatingTable] = []
     private(set) var groups: [GuestGroup] = []
+    private(set) var collaborators: [Collaborator] = []
 
     private(set) var isLoading = false
     var errorMessage: String?
@@ -87,6 +93,22 @@ final class SeatingStore {
             groups = loadedGroups
         } catch {
             errorMessage = error.localizedDescription
+        }
+        await loadCollaborators()
+    }
+
+    /// Loads the event's collaborators (owner + shared editors/viewers) via the
+    /// `event_collaborators` RPC. Non-fatal: the avatar stack falls back to the
+    /// planner's own name when this is empty.
+    func loadCollaborators() async {
+        do {
+            collaborators = try await supabase.rpc(
+                "event_collaborators",
+                params: EventCollaboratorsParams(p_event_id: event.id),
+                as: [Collaborator].self
+            )
+        } catch {
+            // Non-fatal — keep whatever we already had.
         }
     }
 

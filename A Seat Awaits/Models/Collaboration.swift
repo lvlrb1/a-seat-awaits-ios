@@ -18,34 +18,74 @@ nonisolated struct EventProgress: Equatable, Sendable {
 }
 
 /// A pending collaboration invitation the signed-in user has received.
-/// Backed by `event_invitations` (RLS lets an invitee read rows whose
-/// `invitee_email` matches their JWT email).
+/// Backed by the `list_my_pending_invites()` RPC, which flattens the invite
+/// with its event and inviter names and scopes rows to `auth.email()`.
 nonisolated struct EventInvitation: Codable, Identifiable, Equatable, Sendable {
     let id: String
+    let token: String
     let eventId: String
+    var eventNameRaw: String?
+    var eventDate: String?
+    var eventDescription: String?
+    var inviterNameRaw: String?
     var inviteeName: String?
-    var inviteeEmail: String?
     var role: String?
-    var status: String
-    var event: EventRef?
-    var inviter: InviterRef?
-
-    nonisolated struct EventRef: Codable, Equatable, Sendable { var name: String? }
-    nonisolated struct InviterRef: Codable, Equatable, Sendable {
-        var fullName: String?
-        enum CodingKeys: String, CodingKey { case fullName = "full_name" }
-    }
+    var createdAt: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, status, role, event, inviter
+        case id, token, role
         case eventId = "event_id"
+        case eventNameRaw = "event_name"
+        case eventDate = "event_date"
+        case eventDescription = "event_description"
+        case inviterNameRaw = "inviter_name"
         case inviteeName = "invitee_name"
-        case inviteeEmail = "invitee_email"
+        case createdAt = "created_at"
     }
 
-    var inviterName: String { inviter?.fullName?.nilIfBlank ?? "Someone" }
-    var eventName: String { event?.name?.nilIfBlank ?? "an event" }
+    var inviterName: String { inviterNameRaw?.nilIfBlank ?? "Someone" }
+    var eventName: String { eventNameRaw?.nilIfBlank ?? "an event" }
     var roleLabel: String { (role ?? "editor").capitalized }
+}
+
+/// A collaborator on an event (the owner plus any shared editors/viewers).
+/// Backed by the `event_collaborators(p_event_id)` RPC.
+nonisolated struct Collaborator: Codable, Identifiable, Equatable, Sendable {
+    let email: String
+    var fullName: String?
+    var role: String?
+    var isOwner: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case email, role
+        case fullName = "full_name"
+        case isOwner = "is_owner"
+    }
+
+    var id: String { email }
+    var displayName: String { fullName?.nilIfBlank ?? email }
+}
+
+/// Server-computed seating progress for one event.
+/// Backed by the `event_seating_summary(p_event_ids)` RPC.
+nonisolated struct EventSeatingSummary: Codable, Identifiable, Equatable, Sendable {
+    let eventId: String
+    let totalGuests: Int
+    let seatedGuests: Int
+    let unseatedGuests: Int
+    let totalCapacity: Int
+    let openSeats: Int
+
+    enum CodingKeys: String, CodingKey {
+        case eventId = "event_id"
+        case totalGuests = "total_guests"
+        case seatedGuests = "seated_guests"
+        case unseatedGuests = "unseated_guests"
+        case totalCapacity = "total_capacity"
+        case openSeats = "open_seats"
+    }
+
+    var id: String { eventId }
 }
 
 /// One result row from `search_guests_by_qr_token`.

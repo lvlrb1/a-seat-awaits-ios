@@ -99,9 +99,12 @@ struct EventDetailView: View {
         .overlay(Brand.hairline.frame(height: 1), alignment: .bottom)
     }
 
-    /// Collaborators to show in the avatar stack. We have no collaborator list in
-    /// this store, so fall back to the signed-in planner's name.
+    /// Collaborators to show in the avatar stack, sourced from the event's
+    /// `event_collaborators` RPC. Falls back to the signed-in planner's name
+    /// until the list loads (or if the event has no shares).
     private var collaboratorNames: [String] {
+        let names = store.collaborators.map(\.displayName).filter { !$0.isEmpty }
+        if !names.isEmpty { return names }
         if let name = appState.currentUser?.displayName, !name.isEmpty {
             return [name]
         }
