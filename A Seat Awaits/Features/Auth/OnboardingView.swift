@@ -52,9 +52,10 @@ struct OnboardingView: View {
                 Spacer()
 
                 // 96pt glass logo tile.
-                Image(systemName: "chair.lounge.fill")
-                    .font(.system(size: 50, weight: .regular))
-                    .foregroundStyle(.white)
+                Image("BrandChair")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 54, height: 54)
                     .frame(width: 96, height: 96)
                     .background(.white.opacity(0.12),
                                 in: RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -345,9 +346,10 @@ struct OnboardingView: View {
     // MARK: - Building blocks
 
     private func logoChip(size: CGFloat, radius: CGFloat, icon: CGFloat, shadow: Bool = false) -> some View {
-        Image(systemName: "chair.lounge.fill")
-            .font(.system(size: icon, weight: .regular))
-            .foregroundStyle(.white)
+        Image("BrandChair")
+            .resizable()
+            .scaledToFit()
+            .frame(width: icon, height: icon)
             .frame(width: size, height: size)
             .background(Brand.plum, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .shadow(color: shadow ? Brand.plum.opacity(0.55) : .clear,

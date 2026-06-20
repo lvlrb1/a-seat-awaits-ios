@@ -98,7 +98,7 @@ struct FindYourTableView: View {
 
     private var searchHeader: some View {
         VStack(spacing: 0) {
-            // Glass logo tile (54pt) with a chair/sofa symbol.
+            // Glass logo tile (54pt) with the brand chair mark.
             RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .fill(.white.opacity(0.14))
                 .frame(width: 54, height: 54)
@@ -107,9 +107,10 @@ struct FindYourTableView: View {
                         .strokeBorder(.white.opacity(0.22), lineWidth: 1)
                 )
                 .overlay(
-                    Image(systemName: "sofa.fill")
-                        .font(.system(size: 25, weight: .regular))
-                        .foregroundStyle(.white)
+                    Image("BrandChair")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 30, height: 30)
                 )
 
             if let name = selectedEvent?.name {
