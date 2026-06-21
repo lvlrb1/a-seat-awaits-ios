@@ -51,4 +51,22 @@ nonisolated struct SeatingTable: Codable, Identifiable, Equatable, Sendable {
     }
 
     var seats: Int { capacity ?? 0 }
+
+    /// Round-footprint tables (no meaningful rotation, draw a capacity ring).
+    var isRound: Bool {
+        let s = shape ?? .circle
+        return s == .circle || s == .oval
+    }
+
+    /// Stored rotation in degrees (0 when unset).
+    var rotationDegrees: Double { rotation ?? 0 }
+
+    /// Physical footprint in feet (width/height are stored at 24pt = 1ft).
+    var widthFeet: Double { TableScale.toFeet(points: width) }
+    var heightFeet: Double { TableScale.toFeet(points: height) }
+
+    /// The matching preset type, when the table's shape + size align to one.
+    var matchingPreset: TablePreset? {
+        TablePreset.match(shape: shape ?? .circle, width: width, height: height)
+    }
 }

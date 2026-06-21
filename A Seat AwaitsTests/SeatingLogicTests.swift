@@ -114,6 +114,67 @@ struct GuestFilterTests {
     }
 }
 
+@Suite("Table sorting")
+struct TableSortTests {
+
+    private func tables() -> [SeatingTable] {
+        [makeTable("Sweetheart", id: "t1", capacity: 2),
+         makeTable("Family", id: "t2", capacity: 10),
+         makeTable("Aunties", id: "t3", capacity: 6)]
+    }
+
+    @Test("Name sort is case-insensitive A–Z")
+    func nameSort() {
+        let sorted = SeatingLogic.sortedTables(tables(), by: .nameAZ, guests: [])
+        #expect(sorted.map(\.name) == ["Aunties", "Family", "Sweetheart"])
+    }
+
+    @Test("Capacity sort orders by most seats, ties broken by name")
+    func capacitySort() {
+        let extra = makeTable("Bar", id: "t4", capacity: 10)   // ties with Family
+        let sorted = SeatingLogic.sortedTables(tables() + [extra], by: .capacity, guests: [])
+        #expect(sorted.map(\.name) == ["Bar", "Family", "Aunties", "Sweetheart"])
+    }
+
+    @Test("Most-open sort surfaces tables with the most empty seats")
+    func mostOpenSort() {
+        // Family (10 cap) seats 1 → 9 open; Aunties (6) seats 5 → 1 open;
+        // Sweetheart (2) seats 0 → 2 open.
+        let guests = [makeGuest("A", tableId: "t2"),
+                      makeGuest("B", tableId: "t3"), makeGuest("C", tableId: "t3"),
+                      makeGuest("D", tableId: "t3"), makeGuest("E", tableId: "t3"),
+                      makeGuest("F", tableId: "t3")]
+        let sorted = SeatingLogic.sortedTables(tables(), by: .mostOpen, guests: guests)
+        #expect(sorted.map(\.name) == ["Family", "Sweetheart", "Aunties"])
+    }
+
+    @Test("Fullest sort surfaces the most-occupied tables first")
+    func fullestSort() {
+        // Sweetheart (2) seats 2 → 100%; Aunties (6) seats 3 → 50%; Family (10) seats 1 → 10%.
+        let guests = [makeGuest("A", tableId: "t1"), makeGuest("B", tableId: "t1"),
+                      makeGuest("C", tableId: "t3"), makeGuest("D", tableId: "t3"),
+                      makeGuest("E", tableId: "t3"),
+                      makeGuest("F", tableId: "t2")]
+        let sorted = SeatingLogic.sortedTables(tables(), by: .fullest, guests: guests)
+        #expect(sorted.map(\.name) == ["Sweetheart", "Aunties", "Family"])
+    }
+
+    @Test("Uncapped tables count as unlimited room and zero fill")
+    func uncappedExtremes() {
+        let capped = makeTable("Round", id: "c1", capacity: 4)
+        let bar = makeTable("Bar", id: "c2", capacity: nil)
+        // Seat the capped table to 100% and pile guests at the bar; the bar's
+        // fill stays zero because it has no seat limit.
+        let guests = [makeGuest("A", tableId: "c1"), makeGuest("B", tableId: "c1"),
+                      makeGuest("C", tableId: "c1"), makeGuest("D", tableId: "c1"),
+                      makeGuest("E", tableId: "c2"), makeGuest("F", tableId: "c2")]
+        let mostOpen = SeatingLogic.sortedTables([capped, bar], by: .mostOpen, guests: guests)
+        #expect(mostOpen.first?.name == "Bar")        // unlimited room first
+        let fullest = SeatingLogic.sortedTables([capped, bar], by: .fullest, guests: guests)
+        #expect(fullest.first?.name == "Round")       // bar never counts as full
+    }
+}
+
 @Suite("Table occupancy")
 struct OccupancyTests {
 
@@ -147,16 +208,33 @@ struct OccupancyTests {
     }
 }
 
-@Suite("Add-table sizing")
-struct TableSizingTests {
+@Suite("Table presets & real-world scale")
+struct TablePresetTests {
 
-    @Test("Rectangles are wider than tall; circles are square")
-    func sizing() {
-        let circle = AddTableView.size(for: .circle, capacity: 8)
-        #expect(circle.width == circle.height)
+    @Test("Scale converts feet/inches to points at 24pt = 1ft")
+    func scale() {
+        #expect(TableScale.feet(4) == 96)
+        #expect(TableScale.inches(30) == 60)
+        #expect(TableScale.toFeet(points: 120) == 5)
+    }
 
-        let rect = AddTableView.size(for: .rectangle, capacity: 8)
-        #expect(rect.width > rect.height)
+    @Test("Presets mirror the web specs: round tables square, rectangles wider")
+    func presetShapes() {
+        let round = TablePreset.all.first { $0.id == "round-60in" }!
+        #expect(round.width == round.height)          // 60" round → 120 × 120
+        #expect(round.capacity == 10)
+
+        let rect = TablePreset.all.first { $0.id == "rectangle-6ft" }!
+        #expect(rect.width > rect.height)             // 6ft × 30"
+        #expect(rect.width == TableScale.feet(6))
+        #expect(rect.height == TableScale.inches(30))
+    }
+
+    @Test("Matching resolves a table's preset by shape + size, else nil (custom)")
+    func matching() {
+        // 48" round, 8 seats → preset; arbitrary size → custom.
+        #expect(TablePreset.match(shape: .circle, width: 96, height: 96)?.id == "round-48in")
+        #expect(TablePreset.match(shape: .rectangle, width: 137, height: 71) == nil)
     }
 }
 

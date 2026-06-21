@@ -92,6 +92,11 @@ enum Brand {
     static let inviteSubtitle = Color.hex("#92400E")
     static let danger = Color.hex("#DC2626")
 
+    /// Muted mauve used for floor-plan seat rings (open seats / chair outlines).
+    static let seatRing = Color.hex("#8C7A9C")
+    /// Brighter mauve seat ring for dark-mode floor plans.
+    static let seatRingDark = Color.hex("#B6A4C6")
+
     // Accent chip families
     static let plumChipFill = Color.hex("#F3E8FF")   // assigned-to-table chip
     static let plumChipFillSoft = Color.hex("#FAF5FF")
@@ -147,6 +152,10 @@ enum Brand {
     static var primaryFill: Color { .dynamic(plum, plumDark) }
     /// Progress-ring track.
     static var ringTrack: Color { .dynamic(slate100, hairlineDark) }
+    /// Floor-plan smart-alignment guide line (pink, mirrors the web canvas).
+    static var alignmentGuide: Color { .dynamic(Color.hex("#DB2777"), Color.hex("#F472B6")) }
+    /// Floor-plan collision/overlap warning outline (red).
+    static var collisionStroke: Color { .dynamic(Color.hex("#DC2626"), Color.hex("#F87171")) }
 
     // Gradients
     /// Back-compat light-mode hero gradient.

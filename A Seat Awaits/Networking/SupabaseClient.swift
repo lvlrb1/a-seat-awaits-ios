@@ -122,12 +122,75 @@ actor SupabaseClient {
         _ = try await authRequest(path: "recover", body: Body(email: email))
     }
 
-    func signOut() async {
+    /// Sign-out scope. `.local` revokes only this device's refresh token;
+    /// `.global` revokes every session for the user (sign out everywhere).
+    enum SignOutScope: String { case local, global }
+
+    func signOut(scope: SignOutScope = .global) async {
         if let token = session?.accessToken {
             // Best-effort server-side revocation; ignore failures.
-            _ = try? await authRequest(path: "logout", body: EmptyBody(), accessToken: token, expectsBody: false)
+            _ = try? await authRequest(path: "logout",
+                                       query: [URLQueryItem(name: "scope", value: scope.rawValue)],
+                                       body: EmptyBody(), accessToken: token, expectsBody: false)
         }
         setSession(nil)
+    }
+
+    // MARK: - Authenticated user (GoTrue /user)
+
+    /// Fetches the full authenticated user from `GET /auth/v1/user`, including
+    /// the fields a persisted session omits (provider, verification timestamps,
+    /// creation date, pending email change). Does not mutate the cached session.
+    func fetchCurrentUser() async throws -> AuthUser {
+        let token = try await validAccessToken()
+        let data = try await userRequest(method: "GET", body: Optional<EmptyBody>.none, accessToken: token)
+        return try decode(AuthUser.self, from: data)
+    }
+
+    /// Updates the authenticated user via `PUT /auth/v1/user`. Any combination of
+    /// email, password and full-name metadata may be changed in one call. Returns
+    /// the updated user and reconciles the cached session's user so the rest of
+    /// the app sees the change immediately. For an email change requiring
+    /// confirmation, the returned user keeps its old `email` and exposes the
+    /// requested address as `new_email` (pending) until Supabase confirms it.
+    @discardableResult
+    func updateAuthUser(email: String? = nil,
+                        password: String? = nil,
+                        fullName: String? = nil) async throws -> AuthUser {
+        struct Metadata: Encodable { let full_name: String }
+        struct Body: Encodable {
+            var email: String?
+            var password: String?
+            var data: Metadata?
+        }
+        var body = Body()
+        body.email = email
+        body.password = password
+        if let fullName { body.data = Metadata(full_name: fullName) }
+
+        let token = try await validAccessToken()
+        let data = try await userRequest(method: "PUT", body: body, accessToken: token)
+        let updated = try decode(AuthUser.self, from: data)
+
+        // Reconcile the cached session's user (token is unchanged by an update).
+        if var current = session {
+            current.user = updated
+            setSession(current)
+        }
+        return updated
+    }
+
+    /// Verifies the supplied password by performing a password grant for the
+    /// current email. On success the session is refreshed with the new tokens;
+    /// on failure it throws (the caller surfaces "incorrect password"). Used to
+    /// reauthenticate before a sensitive change such as a password update.
+    func reauthenticate(email: String, password: String) async throws {
+        struct Body: Encodable { let email: String; let password: String }
+        let data = try await authRequest(path: "token",
+                                         query: [URLQueryItem(name: "grant_type", value: "password")],
+                                         body: Body(email: email, password: password))
+        let session = try decode(AuthSession.self, from: data)
+        setSession(session)
     }
 
     private func refreshToken() async throws {
@@ -158,6 +221,13 @@ actor SupabaseClient {
                                          as type: T.Type) async throws -> T {
         let data = try await restRequest(method: "GET", table: table, query: query, body: Optional<EmptyBody>.none)
         return try decode(T.self, from: data)
+    }
+
+    /// GET rows as raw JSON bytes (a PostgREST array). Used by the data export,
+    /// which serializes exactly the RLS-visible columns the `select` requests
+    /// without binding them to a Swift model.
+    func selectRaw(_ table: String, query: [URLQueryItem]) async throws -> Data {
+        try await restRequest(method: "GET", table: table, query: query, body: Optional<EmptyBody>.none)
     }
 
     /// INSERT a row and return the created representation.
@@ -217,6 +287,22 @@ actor SupabaseClient {
         return try await perform(request)
     }
 
+    /// GET/PUT the GoTrue user endpoint (`auth/v1/user`) with a bearer token.
+    private func userRequest<Body: Encodable>(method: String,
+                                              body: Body?,
+                                              accessToken: String) async throws -> Data {
+        var request = URLRequest(url: baseURL.appendingPathComponent("auth/v1/user"))
+        request.httpMethod = method
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try encoder.encode(body)
+        }
+        return try await perform(request)
+    }
+
     private func restRequest<Body: Encodable>(method: String,
                                               table: String,
                                               query: [URLQueryItem],
@@ -245,6 +331,18 @@ actor SupabaseClient {
         do {
             (data, response) = try await urlSession.data(for: request)
         } catch {
+            // Map common connectivity failures to a dedicated offline case so the
+            // UI can surface an offline state rather than a raw URLError string.
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .notConnectedToInternet, .networkConnectionLost,
+                     .timedOut, .cannotConnectToHost, .cannotFindHost,
+                     .dataNotAllowed, .internationalRoamingOff:
+                    throw SupabaseError.offline
+                default:
+                    break
+                }
+            }
             throw SupabaseError.transport(error.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else {

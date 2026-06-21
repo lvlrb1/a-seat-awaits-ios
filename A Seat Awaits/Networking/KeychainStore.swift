@@ -9,8 +9,10 @@
 import Foundation
 import Security
 
-/// Stores and retrieves a small `Codable` value in the Keychain.
-struct KeychainStore {
+/// Stores and retrieves a small `Codable` value in the Keychain. Stateless
+/// infrastructure — `nonisolated` so the Supabase `actor` can build and use it
+/// without tripping the project's default-MainActor isolation.
+nonisolated struct KeychainStore {
     let service: String
     let account: String
 

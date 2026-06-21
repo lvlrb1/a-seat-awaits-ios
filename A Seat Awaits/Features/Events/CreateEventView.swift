@@ -17,12 +17,11 @@ struct CreateEventView: View {
     @State private var date = Date()
     @State private var location = ""
     @State private var description = ""
-    @State private var guestsEstimate = ""   // UI-only; no DB column.
     @State private var isSaving = false
     @State private var showingDatePicker = false
     @State private var errorMessage: String?
 
-    private enum Field { case name, guests, venue }
+    private enum Field { case name, venue }
     @FocusState private var focused: Field?
 
     private static let isoDate: DateFormatter = {
@@ -48,12 +47,11 @@ struct CreateEventView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 6)
 
+            // Single primary action (the pinned "Create Event" button below) —
+            // the header only cancels, removing the duplicate CTA (F14).
             SheetHeader(
                 title: "New Event",
-                actionTitle: "Create",
-                actionEnabled: canCreate,
-                onCancel: { dismiss() },
-                onAction: { Task { await create() } }
+                onCancel: { dismiss() }
             )
             .padding(.horizontal, 4)
 
@@ -65,26 +63,18 @@ struct CreateEventView: View {
                             .submitLabel(.next)
                     }
 
-                    HStack(alignment: .top, spacing: 14) {
-                        LabeledField(title: "Date") {
-                            Button { showingDatePicker = true } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "calendar")
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundStyle(Brand.slate400)
-                                    Text(hasDate ? Self.dateDisplay.string(from: date) : "Pick a date")
-                                        .foregroundStyle(hasDate ? Brand.textPrimary : Brand.slate400)
-                                    Spacer(minLength: 0)
-                                }
+                    LabeledField(title: "Date") {
+                        Button { showingDatePicker = true } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "calendar")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Brand.slate400)
+                                Text(hasDate ? Self.dateDisplay.string(from: date) : "Pick a date")
+                                    .foregroundStyle(hasDate ? Brand.textPrimary : Brand.slate400)
+                                Spacer(minLength: 0)
                             }
-                            .buttonStyle(.plain)
                         }
-
-                        LabeledField(title: "Guests (est.)", isFocused: focused == .guests) {
-                            TextField("160", text: $guestsEstimate)
-                                .keyboardType(.numberPad)
-                                .focused($focused, equals: .guests)
-                        }
+                        .buttonStyle(.plain)
                     }
 
                     LabeledField(title: "Venue", isFocused: focused == .venue) {
@@ -168,7 +158,7 @@ struct CreateEventView: View {
             )
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = FriendlyError.message(for: error)
         }
     }
 }

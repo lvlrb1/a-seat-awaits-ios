@@ -35,9 +35,12 @@ struct LaunchView: View {
         ZStack {
             Brand.heroGradient.ignoresSafeArea()
             VStack(spacing: 20) {
-                Image(systemName: "chair.lounge.fill")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.white)
+                // Brand chair mark (matches onboarding & lookup), not a generic
+                // SF Symbol, for a consistent first impression (F13).
+                Image("BrandChair")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 64, height: 64)
                 ProgressView()
                     .tint(.white)
             }

@@ -15,8 +15,10 @@ struct GuestListView: View {
     @State private var search = ""
     @State private var filter: GuestFilter = .all
     @State private var groupFilter: String?
+    @State private var sort: GuestSort = .lastNameAZ
     @State private var detailGuest: Guest?
     @State private var showingImport = false
+    @State private var guestPendingDeletion: Guest?
 
     enum GuestFilter: Equatable {
         case all
@@ -33,7 +35,7 @@ struct GuestListView: View {
         let base = SeatingLogic.filterAndSort(store.guests,
                                               search: search,
                                               groupId: filter == .households ? groupFilter : nil,
-                                              sort: filter == .households ? .group : .lastNameAZ)
+                                              sort: sort)
         switch filter {
         case .all, .households:
             return base
@@ -64,14 +66,27 @@ struct GuestListView: View {
                             .contentShape(Rectangle())
                             .onTapGesture { detailGuest = guest }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    Task { await store.deleteGuest(guest) }
-                                } label: { Label("Delete", systemImage: "trash") }
+                                if store.canEdit {
+                                    Button(role: .destructive) {
+                                        requestDelete(guest)
+                                    } label: { Label("Delete", systemImage: "trash") }
 
-                                Button {
-                                    detailGuest = guest
-                                } label: { Label("Assign", systemImage: "person.crop.circle.badge.plus") }
-                                    .tint(Brand.plum)
+                                    Button {
+                                        detailGuest = guest
+                                    } label: { Label("Assign", systemImage: "person.crop.circle.badge.plus") }
+                                        .tint(Brand.plum)
+                                }
+                            }
+                            // Non-swipe paths for VoiceOver / Switch Control (A11y-2).
+                            .contextMenu {
+                                if store.canEdit {
+                                    Button {
+                                        detailGuest = guest
+                                    } label: { Label("Assign to Table", systemImage: "person.crop.circle.badge.plus") }
+                                    Button(role: .destructive) {
+                                        requestDelete(guest)
+                                    } label: { Label("Delete Guest", systemImage: "trash") }
+                                }
                             }
                     }
                 }
@@ -89,6 +104,54 @@ struct GuestListView: View {
         .sheet(isPresented: $showingImport) {
             ImportGuestsView(store: store)
         }
+        .confirmationDialog(
+            guestPendingDeletion.map { "Remove \($0.name)?" } ?? "Remove guest?",
+            isPresented: Binding(get: { guestPendingDeletion != nil },
+                                 set: { if !$0 { guestPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Guest", role: .destructive) {
+                if let guest = guestPendingDeletion {
+                    Task { await store.deleteGuestWithUndo(guest) }
+                }
+                guestPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { guestPendingDeletion = nil }
+        } message: {
+            if let guest = guestPendingDeletion {
+                Text(deletionMessage(for: guest))
+            }
+        }
+    }
+
+    /// Routes a delete request: guests carrying real data (a seat, notes, dietary
+    /// needs) get a confirmation; empty rows delete straight away. Both paths offer
+    /// undo (F2).
+    private func requestDelete(_ guest: Guest) {
+        if isPopulated(guest) {
+            guestPendingDeletion = guest
+        } else {
+            Task { await store.deleteGuestWithUndo(guest) }
+        }
+    }
+
+    private func isPopulated(_ guest: Guest) -> Bool {
+        guest.isAssigned
+            || guest.notes?.nilIfBlank != nil
+            || guest.dietaryPreference?.nilIfBlank != nil
+            || guest.groupName?.nilIfBlank != nil
+    }
+
+    /// Confirmation copy that names what would be lost (F2).
+    private func deletionMessage(for guest: Guest) -> String {
+        var parts: [String] = []
+        if let table = store.table(withId: guest.tableId) {
+            parts.append("seated at \(table.name)")
+        }
+        if guest.dietaryPreference?.nilIfBlank != nil { parts.append("has dietary notes") }
+        else if guest.notes?.nilIfBlank != nil { parts.append("has notes") }
+        let detail = parts.isEmpty ? "" : " They're \(parts.joined(separator: " and "))."
+        return "\(detail) You'll be able to undo for a few seconds.".trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: - Search + filter chips
@@ -97,14 +160,17 @@ struct GuestListView: View {
         VStack(spacing: 10) {
             SearchField(text: $search, placeholder: "Search guests", height: 42)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    let stats = store.stats
-                    chip(.all,        title: "All",      count: stats.total,    bg: Brand.plum)
-                    chip(.assigned,   title: "Assigned", count: stats.assigned, bg: Brand.success)
-                    chip(.open,       title: "Open",     count: stats.open,     bg: Brand.warning)
-                    chip(.households, title: "Households", count: nil,          bg: Brand.plum)
+            HStack(spacing: 8) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        let stats = store.stats
+                        chip(.all,        title: "All",      count: stats.total,    bg: Brand.plum)
+                        chip(.assigned,   title: "Assigned", count: stats.assigned, bg: Brand.success)
+                        chip(.open,       title: "Open",     count: stats.open,     bg: Brand.warning)
+                        chip(.households, title: "Households", count: nil,          bg: Brand.plum)
+                    }
                 }
+                sortMenu
             }
 
             if filter == .households {
@@ -144,6 +210,26 @@ struct GuestListView: View {
         .buttonStyle(.plain)
     }
 
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort guests", selection: $sort) {
+                ForEach(GuestSort.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Brand.accent)
+                .frame(width: 38, height: 32)
+                .background(Brand.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                // Keep the 38×32 pill visual but guarantee a 44pt hit target (A11y-5).
+                .contentShape(Rectangle())
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel("Sort guests")
+    }
+
     // MARK: - Footer
 
     private var footer: some View {
@@ -154,21 +240,23 @@ struct GuestListView: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(Brand.textPrimary)
                 Spacer()
-                Button {
-                    showingImport = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 14, weight: .bold))
-                        Text("Import").font(.system(size: 13, weight: .bold))
+                if store.canEdit {
+                    Button {
+                        showingImport = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("Import").font(.system(size: 13, weight: .bold))
+                        }
+                        .foregroundStyle(Brand.accent)
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Brand.accent, lineWidth: 1.5))
                     }
-                    .foregroundStyle(Brand.accent)
-                    .padding(.horizontal, 14)
-                    .frame(height: 34)
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Brand.accent, lineWidth: 1.5))
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             ProgressBar(progress: fraction)
         }

@@ -40,6 +40,13 @@ final class EventStore {
     private(set) var isLoading = false
     var errorMessage: String?
 
+    /// Shared undo banner for reversible actions on the dashboard (event delete).
+    let undo = UndoToast()
+
+    /// A delete that has been hidden locally but not yet committed to the server,
+    /// so the user can undo it. Only one is ever in flight.
+    private var pendingDelete: (event: Event, index: Int, task: Task<Void, Never>)?
+
     init(supabase: SupabaseClient) {
         self.supabase = supabase
     }
@@ -60,7 +67,7 @@ final class EventStore {
                 as: [Event].self
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = FriendlyError.message(for: error)
         }
         await loadProgress()
     }
@@ -121,7 +128,7 @@ final class EventStore {
             pendingInvites.removeAll { $0.id == invite.id }
             await load()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = FriendlyError.message(for: error)
         }
     }
 
@@ -144,13 +151,56 @@ final class EventStore {
         return event
     }
 
-    func delete(_ event: Event) async {
+    /// Deletes an event with a 5-second undo window. The row is hidden locally
+    /// immediately and the server delete (which cascades to guests, tables, rooms
+    /// and the floor plan) is deferred so an accidental delete can be reversed
+    /// before any data is destroyed. A confirmation precedes this in the UI (F1).
+    func deleteWithUndo(_ event: Event) {
+        guard let index = events.firstIndex(where: { $0.id == event.id }) else { return }
+        // Only one deferred delete in flight: commit any prior one now.
+        flushPendingDelete()
+
+        let removed = events.remove(at: index)
+        let task = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(UndoToast.defaultDuration))
+            guard !Task.isCancelled else { return }
+            await self?.commitDelete(removed)
+        }
+        pendingDelete = (removed, index, task)
+
+        undo.show("Deleted “\(removed.name).”") { [weak self] in
+            self?.cancelPendingDelete(restoring: removed, at: index)
+        }
+    }
+
+    /// Re-shows a pending-deleted event (Undo tapped) before its commit fires.
+    private func cancelPendingDelete(restoring event: Event, at index: Int) {
+        guard pendingDelete?.event.id == event.id else { return }
+        pendingDelete?.task.cancel()
+        pendingDelete = nil
+        events.insert(event, at: min(index, events.count))
+    }
+
+    /// Commits a deferred event delete to the server. On failure the row is
+    /// restored and a friendly message surfaced.
+    private func commitDelete(_ event: Event) async {
+        guard pendingDelete?.event.id == event.id else { return }
+        let index = pendingDelete?.index ?? events.count
+        pendingDelete = nil
         do {
             try await supabase.delete("events", query: [URLQueryItem(name: "id", value: "eq.\(event.id)")])
-            events.removeAll { $0.id == event.id }
         } catch {
-            errorMessage = error.localizedDescription
+            events.insert(event, at: min(index, events.count))
+            errorMessage = FriendlyError.message(for: error)
         }
+    }
+
+    /// Immediately commits any pending delete (e.g. before the dashboard tears
+    /// down or another delete starts), skipping the remaining undo window.
+    func flushPendingDelete() {
+        guard let pending = pendingDelete else { return }
+        pending.task.cancel()
+        Task { await commitDelete(pending.event) }
     }
 }
 

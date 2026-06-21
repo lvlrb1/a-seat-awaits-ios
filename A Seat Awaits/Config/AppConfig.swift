@@ -31,10 +31,17 @@ enum AppConfig {
         }
     }
 
+    /// The public marketing/guest origin used to build shareable guest links
+    /// (e.g. the `/r/{token}` QR target). Non-secret; only used to construct
+    /// URLs, never to call a server API.
+    static let defaultPublicSiteURL = URL(string: "https://aseatawaits.com")!
+
     /// Parsed configuration values.
     struct Values {
         let supabaseURL: URL
         let supabaseAnonKey: String
+        /// Public origin for guest-facing links. Defaults to `aseatawaits.com`.
+        let publicSiteURL: URL
     }
 
     /// Lazily loaded, cached configuration. Throws a descriptive error when the
@@ -63,6 +70,19 @@ enum AppConfig {
             throw ConfigError.invalidURL(urlString)
         }
 
-        return Values(supabaseURL: supabaseURL, supabaseAnonKey: anonKey)
+        // PUBLIC_SITE_URL is optional; fall back to the production origin so the
+        // app builds without extra setup. Only used to construct guest links.
+        let publicSiteURL: URL
+        if let siteString = (dict["PUBLIC_SITE_URL"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !siteString.isEmpty {
+            guard let parsed = URL(string: siteString), parsed.scheme != nil else {
+                throw ConfigError.invalidURL(siteString)
+            }
+            publicSiteURL = parsed
+        } else {
+            publicSiteURL = defaultPublicSiteURL
+        }
+
+        return Values(supabaseURL: supabaseURL, supabaseAnonKey: anonKey, publicSiteURL: publicSiteURL)
     }
 }

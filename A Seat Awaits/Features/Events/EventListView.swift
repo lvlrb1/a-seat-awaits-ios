@@ -19,6 +19,7 @@ struct EventListView: View {
     @State private var showingCreate = false
     @State private var searchText = ""
     @State private var sortDescending = false   // false = soonest first
+    @State private var eventPendingDeletion: Event?
 
     init(supabase: SupabaseClient) {
         self.supabase = supabase
@@ -32,9 +33,31 @@ struct EventListView: View {
         return name.split(separator: " ").first.map(String.init) ?? name
     }
 
-    private var greeting: String { "Good evening, \(firstName)" }
+    /// Time-aware greeting (F11) — no longer hard-coded to "Good evening".
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let part: String
+        switch hour {
+        case 5..<12: part = "Good morning"
+        case 12..<17: part = "Good afternoon"
+        default: part = "Good evening"
+        }
+        return "\(part), \(firstName)"
+    }
 
     private var avatarName: String { appState.currentUser?.displayName ?? "Planner" }
+
+    /// Confirmation copy that names the event's scale before deletion (F1).
+    private func deletionMessage(for event: Event) -> String {
+        let total = store.progress(for: event.id)?.total ?? 0
+        let scale: String
+        if total > 0 {
+            scale = "its \(total) guest\(total == 1 ? "" : "s"), tables and floor plan"
+        } else {
+            scale = "its tables and floor plan"
+        }
+        return "This permanently removes \(scale). You'll have a few seconds to undo."
+    }
 
     /// Search-filtered, date-sorted events.
     private var visibleEvents: [Event] {
@@ -72,9 +95,28 @@ struct EventListView: View {
                     .padding(.trailing, 20)
                     .padding(.bottom, 24)
             }
+            .undoSnackbar(store.undo)
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingCreate) {
                 CreateEventView(store: store)
+            }
+            .confirmationDialog(
+                eventPendingDeletion.map { "Delete “\($0.name)”?" } ?? "Delete event?",
+                isPresented: Binding(get: { eventPendingDeletion != nil },
+                                     set: { if !$0 { eventPendingDeletion = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Event", role: .destructive) {
+                    if let event = eventPendingDeletion {
+                        store.deleteWithUndo(event)
+                    }
+                    eventPendingDeletion = nil
+                }
+                Button("Cancel", role: .cancel) { eventPendingDeletion = nil }
+            } message: {
+                if let event = eventPendingDeletion {
+                    Text(deletionMessage(for: event))
+                }
             }
             .refreshable { await store.loadDashboard(myEmail: appState.currentUser?.email) }
             .task {
@@ -132,10 +174,19 @@ struct EventListView: View {
                         .opacity(0)
                     }
                     .cardRow()
-                }
-                .onDelete { offsets in
-                    let toDelete = offsets.map { events[$0] }
-                    Task { for event in toDelete { await store.delete(event) } }
+                    // Swipe is gated by a confirmation that names the event and its
+                    // scale (F1); allowsFullSwipe off so a stray swipe can't delete.
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            eventPendingDeletion = event
+                        } label: { Label("Delete", systemImage: "trash") }
+                    }
+                    // Non-swipe path for VoiceOver / Switch Control users (A11y-2).
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            eventPendingDeletion = event
+                        } label: { Label("Delete Event", systemImage: "trash") }
+                    }
                 }
 
                 // Clearance for the floating button.
@@ -286,6 +337,9 @@ private struct InviteCard: View {
                     .padding(.horizontal, 16)
                     .frame(height: 34)
                     .background(Brand.warningText, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    // Visual pill stays 34pt; hit target meets 44pt (A11y-5).
+                    .contentShape(Rectangle())
+                    .frame(minHeight: 44)
             }
             .buttonStyle(.plain)
             .disabled(isAccepting)

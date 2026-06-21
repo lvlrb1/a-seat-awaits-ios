@@ -176,6 +176,15 @@ enum GuestImportParser {
         s.split(separator: " ").first.map(String.init) ?? s
     }
 
+    /// A normalized key for duplicate detection: lowercased, trimmed, with runs
+    /// of whitespace collapsed to a single space (F6).
+    static func normalizedName(_ name: String) -> String {
+        name.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     /// Title-cases each word of a name ("chris anderson" → "Chris Anderson").
     static func titleCasedName(_ name: String) -> String {
         name

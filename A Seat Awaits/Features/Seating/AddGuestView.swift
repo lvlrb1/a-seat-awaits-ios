@@ -80,7 +80,7 @@ struct AddGuestView: View {
             )
             dismiss()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = FriendlyError.message(for: error)
         }
     }
 }

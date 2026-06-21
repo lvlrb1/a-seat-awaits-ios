@@ -12,6 +12,9 @@ enum SupabaseError: LocalizedError {
     case http(status: Int, message: String)
     case decoding(String)
     case transport(String)
+    /// A connectivity failure (no network / timed out). Distinct from a generic
+    /// transport error so the UI can show an offline state (F10).
+    case offline
 
     var errorDescription: String? {
         switch self {
@@ -21,12 +24,14 @@ enum SupabaseError: LocalizedError {
             return message.isEmpty ? "Request failed (HTTP \(status))." : message
         case .decoding(let msg): return "Couldn't read the server response. \(msg)"
         case .transport(let msg): return msg
+        case .offline: return "You're offline. Check your connection and try again."
         }
     }
 }
 
-/// Shape of a Supabase/PostgREST/GoTrue error body, used to extract a readable message.
-struct SupabaseErrorBody: Decodable {
+/// Shape of a Supabase/PostgREST/GoTrue error body, used to extract a readable
+/// message. `nonisolated` so it can be decoded inside the Supabase `actor`.
+nonisolated struct SupabaseErrorBody: Decodable {
     let message: String?
     let error: String?
     let errorDescription: String?

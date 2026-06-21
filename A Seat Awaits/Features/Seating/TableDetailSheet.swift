@@ -15,6 +15,13 @@ struct TableDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingDelete = false
     @State private var showingAssign = false
+    @State private var showingEdit = false
+    /// Guests ticked in the multi-select assign picker, by id.
+    @State private var assignSelection: Set<String> = []
+
+    /// Always read the latest table from the store so edits/duplicates made from
+    /// this sheet reflect immediately (the passed-in `table` is a snapshot).
+    private var t: SeatingTable { store.tables.first { $0.id == table.id } ?? table }
 
     private var seated: [Guest] {
         store.guests.filter { $0.tableId == table.id }
@@ -24,8 +31,10 @@ struct TableDetailSheet: View {
         store.guests.filter { !$0.isAssigned }
             .sorted { $0.lastNameKey < $1.lastNameKey }
     }
-    private var capacity: Int { table.capacity ?? 0 }
+    private var canEdit: Bool { store.canEdit }
+    private var capacity: Int { t.capacity ?? 0 }
     private var isFull: Bool { capacity > 0 && seated.count >= capacity }
+    private var isOver: Bool { capacity > 0 && seated.count > capacity }
     private var progress: Double { capacity > 0 ? Double(seated.count) / Double(capacity) : 0 }
     private var open: Int { max(0, capacity - seated.count) }
 
@@ -37,9 +46,13 @@ struct TableDetailSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    detailsSection
+                    if canEdit { actionButtons }
                     seatedSection
-                    if !showingAssign { assignSection } else { assignPicker }
-                    deleteButton
+                    if canEdit {
+                        if !showingAssign { assignSection } else { assignPicker }
+                        deleteButton
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 18)
@@ -48,7 +61,10 @@ struct TableDetailSheet: View {
         }
         .background(Brand.canvas)
         .presentationDragIndicator(.hidden)
-        .confirmationDialog("Delete \(table.name)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+        .sheet(isPresented: $showingEdit) {
+            AddTableView(store: store, editing: t)
+        }
+        .confirmationDialog("Delete \(t.name)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("Delete table", role: .destructive) {
                 Task { await store.deleteTable(table); dismiss() }
             }
@@ -77,12 +93,15 @@ struct TableDetailSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(table.name)
+                Text(t.name)
                     .font(.system(size: 22, weight: .bold))
                     .tracking(-0.02 * 22)
                     .foregroundStyle(Brand.textPrimary)
                 if capacity > 0 {
-                    if isFull {
+                    if isOver {
+                        TagPill(text: "\(seated.count - capacity) over", fg: Brand.danger,
+                                bg: Brand.danger.opacity(0.12))
+                    } else if isFull {
                         TagPill.seated("Full")
                     } else {
                         TagPill.open("\(open) open")
@@ -101,6 +120,76 @@ struct TableDetailSheet: View {
         .padding(.horizontal, 20)
     }
 
+    // MARK: - Details
+
+    private var detailsSection: some View {
+        VStack(spacing: 0) {
+            detailRow("Type", value: typeText)
+            rowDivider
+            detailRow("Size", value: sizeText)
+            if !t.isRound {
+                rowDivider
+                detailRow("Rotation", value: "\(Int(t.rotationDegrees))°")
+            }
+            rowDivider
+            detailRow("Seats", value: seatsText)
+            if let note = t.description?.nilIfBlank {
+                rowDivider
+                detailRow("Notes", value: note)
+            }
+        }
+        .brandCard()
+    }
+
+    private func detailRow(_ title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Brand.textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private var typeText: String {
+        if let preset = t.matchingPreset { return preset.label }
+        return (t.shape ?? .circle).label
+    }
+
+    private var sizeText: String {
+        let w = TableScale.feetLabel(t.widthFeet)
+        if t.isRound { return "\(w) ft round" }
+        let l = TableScale.feetLabel(t.heightFeet)
+        return "\(w) × \(l) ft"
+    }
+
+    private var seatsText: String {
+        guard capacity > 0 else { return "\(seated.count) seated" }
+        if isOver { return "\(seated.count)/\(capacity) · \(seated.count - capacity) over" }
+        return "\(seated.count)/\(capacity) · \(open) open"
+    }
+
+    // MARK: - Edit / Duplicate
+
+    private var actionButtons: some View {
+        HStack(spacing: 12) {
+            Button { showingEdit = true } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .buttonStyle(.secondaryOutline)
+
+            Button { Task { await store.duplicateTable(t); dismiss() } } label: {
+                Label("Duplicate", systemImage: "plus.square.on.square")
+            }
+            .buttonStyle(.secondaryOutline)
+        }
+    }
+
     // MARK: - Seated guests
 
     private var seatedSection: some View {
@@ -112,12 +201,14 @@ struct TableDetailSheet: View {
                 VStack(spacing: 0) {
                     ForEach(Array(seated.enumerated()), id: \.element.id) { idx, guest in
                         guestRow(guest, trailing: {
-                            Button {
-                                Task { await store.assign(guest, toTable: nil) }
-                            } label: {
-                                Text("Unseat")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(Brand.warningText)
+                            if canEdit {
+                                Button {
+                                    Task { await store.assignWithUndo(guest, toTable: nil) }
+                                } label: {
+                                    Text("Unseat")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(Brand.warningText)
+                                }
                             }
                         })
                         if idx < seated.count - 1 { rowDivider }
@@ -132,6 +223,7 @@ struct TableDetailSheet: View {
 
     private var assignSection: some View {
         Button {
+            assignSelection = []
             showingAssign = true
         } label: {
             HStack(spacing: 8) {
@@ -144,41 +236,86 @@ struct TableDetailSheet: View {
         .opacity(isFull || unassigned.isEmpty ? 0.5 : 1)
     }
 
+    /// Open seats still selectable; nil capacity means unlimited room.
+    private var roomForSelection: Int? { capacity > 0 ? open : nil }
+
+    /// True once the selection has claimed every remaining seat.
+    private var selectionAtCapacity: Bool {
+        guard let room = roomForSelection else { return false }
+        return assignSelection.count >= room
+    }
+
     private var assignPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 sectionLabel("ADD FROM UNASSIGNED")
                 Spacer()
-                Button("Done") { showingAssign = false }
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Brand.accent)
+                if let room = roomForSelection {
+                    Text("\(assignSelection.count) of \(room) open")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(selectionAtCapacity ? Brand.warningText : Brand.textSecondary)
+                }
+                Button("Done") {
+                    showingAssign = false
+                    assignSelection = []
+                }
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Brand.accent)
             }
             if unassigned.isEmpty {
                 emptyHint("Everyone is seated.")
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(unassigned.enumerated()), id: \.element.id) { idx, guest in
+                        let picked = assignSelection.contains(guest.id)
+                        // Block ticking new guests once every open seat is spoken
+                        // for, but always allow un-ticking.
+                        let blocked = !picked && selectionAtCapacity
                         Button {
-                            Task { await store.assign(guest, toTable: table.id) }
+                            toggleAssign(guest)
                         } label: {
                             guestRow(guest, trailing: {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 20))
-                                    .foregroundStyle(isFull ? Brand.slate300 : Brand.accent)
+                                Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 22))
+                                    .foregroundStyle(picked ? Brand.accent
+                                                     : (blocked ? Brand.slate300 : Brand.slate400))
                             })
                         }
                         .buttonStyle(.plain)
-                        .disabled(isFull)
+                        .disabled(blocked)
                         if idx < unassigned.count - 1 { rowDivider }
                     }
                 }
                 .brandCard()
-                if isFull {
-                    Text("This table is full.")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Brand.danger)
+
+                if selectionAtCapacity {
+                    Text("That fills every open seat. Unseat someone or edit the table to add more.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Brand.textSecondary)
                 }
+
+                Button {
+                    let picks = unassigned.filter { assignSelection.contains($0.id) }
+                    Task { await store.assignWithUndo(picks, toTable: table.id) }
+                    showingAssign = false
+                    assignSelection = []
+                } label: {
+                    Text(assignSelection.isEmpty
+                         ? "Select guests to seat"
+                         : "Seat \(assignSelection.count) guest\(assignSelection.count == 1 ? "" : "s")")
+                }
+                .buttonStyle(.primaryBrand)
+                .disabled(assignSelection.isEmpty)
+                .opacity(assignSelection.isEmpty ? 0.5 : 1)
             }
+        }
+    }
+
+    private func toggleAssign(_ guest: Guest) {
+        if assignSelection.contains(guest.id) {
+            assignSelection.remove(guest.id)
+        } else {
+            assignSelection.insert(guest.id)
         }
     }
 

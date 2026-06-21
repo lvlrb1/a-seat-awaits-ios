@@ -377,6 +377,52 @@ struct LiveBadge: View {
     }
 }
 
+// MARK: - View-only (read-only collaborator) badge
+
+/// Shown in place of the live/sort affordances when the signed-in user only has
+/// viewer access to an event — a calm, unmistakable "you can't edit this" cue.
+struct ViewOnlyBadge: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "eye")
+                .font(.system(size: 11, weight: .heavy))
+            Text("VIEW ONLY")
+                .font(.system(size: 11, weight: .heavy))
+                .tracking(0.6)
+        }
+        .foregroundStyle(Brand.textSecondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Brand.control, in: Capsule())
+        .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 1))
+        .accessibilityLabel("View only — you don't have permission to edit this event")
+    }
+}
+
+// MARK: - Offline banner
+
+/// A calm "you're offline" strip shown when a store can't reach the server, so a
+/// dropped save reads as a connection issue rather than "the app is broken" (F10).
+struct OfflineBanner: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "wifi.slash")
+                .font(.system(size: 13, weight: .bold))
+            Text("You're offline — changes will sync when you reconnect.")
+                .font(.system(size: 13, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(Brand.warningText)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.warningFill)
+        .overlay(Brand.warningBorder.frame(height: 1), alignment: .bottom)
+        .accessibilityLabel("You're offline. Changes will sync when you reconnect.")
+    }
+}
+
 // MARK: - Overlapping avatar stack
 
 struct AvatarStack: View {

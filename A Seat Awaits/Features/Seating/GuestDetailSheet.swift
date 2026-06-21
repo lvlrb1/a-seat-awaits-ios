@@ -66,14 +66,14 @@ struct GuestDetailSheet: View {
                     if let notes = guest.notes?.nilIfBlank {
                         notesCard(notes)
                     }
-                    assignSection
+                    if store.canEdit { assignSection }
                 }
                 .padding(.horizontal, 24)
-                .padding(.bottom, 120)
+                .padding(.bottom, store.canEdit ? 120 : 24)
             }
         }
         .background(Brand.card)
-        .overlay(alignment: .bottom) { ctaBar }
+        .overlay(alignment: .bottom) { if store.canEdit { ctaBar } }
         .presentationDragIndicator(.hidden)
         .presentationDetents([.large])
     }
@@ -309,7 +309,7 @@ struct GuestDetailSheet: View {
         guard let tableId = targetTableId else { return }
         isSaving = true
         Task {
-            await store.assign(guest, toTable: tableId)
+            await store.assignWithUndo(guest, toTable: tableId)
             isSaving = false
             dismiss()
         }

@@ -12,15 +12,20 @@ nonisolated struct UserProfile: Codable, Identifiable, Equatable, Sendable {
     var fullName: String?
     var subscriptionTier: String?
     var subscriptionStatus: String?
+    var createdAt: String?
+    var updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case fullName = "full_name"
         case subscriptionTier = "subscription_tier"
         case subscriptionStatus = "subscription_status"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
     }
 
+    /// Customer-facing plan name, normalized through `PlanTier`.
     var tierLabel: String {
-        (subscriptionTier ?? "free").capitalized
+        PlanTier.normalize(subscriptionTier).displayName
     }
 }

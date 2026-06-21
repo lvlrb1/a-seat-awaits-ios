@@ -92,7 +92,7 @@ struct ImportGuestsView: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(Brand.purple)
-            Text("AI reads any format — names, households, dietary notes, and all.")
+            Text("We'll structure your list — names, households and dietary notes — then you review before importing.")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Brand.accent)
                 .fixedSize(horizontal: false, vertical: true)
@@ -126,10 +126,16 @@ struct ImportGuestsView: View {
                 .foregroundStyle(Brand.textPrimary)
                 .padding(.top, 14)
 
-            Text("CSV or Excel · drag & drop or browse")
+            Text("CSV or text file · tap to browse")
                 .font(.system(size: 14))
                 .foregroundStyle(Brand.textSecondary)
                 .padding(.top, 4)
+
+            Text("Exporting from a spreadsheet? Save it as CSV first.")
+                .font(.system(size: 12))
+                .foregroundStyle(Brand.textTertiary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 3)
 
             Button("Choose file") { showFileImporter = true }
                 .buttonStyle(.secondaryOutline)
@@ -201,7 +207,7 @@ struct ImportGuestsView: View {
             HStack(spacing: 9) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 18, weight: .bold))
-                Text("Import with AI")
+                Text("Structure list")
             }
         }
         .buttonStyle(.primaryBrand)
@@ -240,10 +246,10 @@ struct ImportGuestsView: View {
                     pasteText += "\n" + text
                 }
             } catch {
-                importError = error.localizedDescription
+                importError = FriendlyError.message(for: error)
             }
         case .failure(let error):
-            importError = error.localizedDescription
+            importError = FriendlyError.message(for: error)
         }
     }
 }

@@ -109,7 +109,7 @@ struct OnboardingView: View {
                     )
                     .padding(.top, 12)
 
-                    Text("No credit card required")
+                    Text("14-day free trial")
                         .font(.system(size: 13))
                         .foregroundStyle(.white.opacity(0.55))
                         .padding(.top, 18)

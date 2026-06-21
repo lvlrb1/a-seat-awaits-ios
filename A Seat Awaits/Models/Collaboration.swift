@@ -48,6 +48,26 @@ nonisolated struct EventInvitation: Codable, Identifiable, Equatable, Sendable {
     var roleLabel: String { (role ?? "editor").capitalized }
 }
 
+/// The signed-in user's permission on an event. Mirrors the web app's
+/// `useCollaborationPermissions` role model: the owner and shared editors may
+/// mutate; viewers (and the safe default before the role resolves) are
+/// read-only. The DB `share_role` enum only has `viewer`/`editor`; ownership is
+/// derived from `events.owner_id`.
+nonisolated enum EventRole: String, Sendable {
+    case owner
+    case editor
+    case viewer
+
+    /// True when this role may add/edit/move/delete tables, shapes, rooms and
+    /// (re)assign guests. Viewers get a read-only floor plan.
+    var canEdit: Bool { self == .owner || self == .editor }
+}
+
+/// One row of `event_shares` (just the bits we need to resolve a role).
+nonisolated struct EventShareRow: Codable, Sendable {
+    let role: String?
+}
+
 /// A collaborator on an event (the owner plus any shared editors/viewers).
 /// Backed by the `event_collaborators(p_event_id)` RPC.
 nonisolated struct Collaborator: Codable, Identifiable, Equatable, Sendable {

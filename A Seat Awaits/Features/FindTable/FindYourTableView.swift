@@ -197,13 +197,32 @@ struct FindYourTableView: View {
         .shadow(color: .black.opacity(0.35), radius: 17, x: 0, y: 14)
     }
 
+    /// Lowercased names that appear more than once in the current suggestions, so
+    /// colliding rows can be disambiguated (F16).
+    private var collidingNames: Set<String> {
+        var counts: [String: Int] = [:]
+        for guest in suggestions { counts[guest.name.lowercased(), default: 0] += 1 }
+        return Set(counts.filter { $0.value > 1 }.map(\.key))
+    }
+
     private func suggestionRow(_ guest: GuestSearchResult) -> some View {
-        HStack(spacing: 12) {
+        // Only same-name guests get a household subtitle — never extra PII.
+        let isAmbiguous = collidingNames.contains(guest.name.lowercased())
+        let disambiguator = isAmbiguous ? guest.groupName?.nilIfBlank : nil
+        return HStack(spacing: 12) {
             InitialsAvatar(name: guest.name, size: 38)
-            Text(highlightedName(guest.name))
-                .font(.system(size: 16))
-                .foregroundStyle(Brand.ink)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(highlightedName(guest.name))
+                    .font(.system(size: 16))
+                    .foregroundStyle(Brand.ink)
+                    .lineLimit(1)
+                if isAmbiguous {
+                    Text(disambiguator.map { "Household · \($0)" } ?? "Tap to confirm it's you")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Brand.slate500)
+                        .lineLimit(1)
+                }
+            }
             Spacer(minLength: 8)
             Image(systemName: "chevron.right")
                 .font(.system(size: 14, weight: .bold))
@@ -443,7 +462,7 @@ struct FindYourTableView: View {
             )
             if selectedEvent == nil { selectedEvent = events.first }
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = FriendlyError.message(for: error)
         }
     }
 
@@ -487,7 +506,7 @@ struct FindYourTableView: View {
         } catch {
             if Task.isCancelled { return }
             suggestions = []
-            errorMessage = error.localizedDescription
+            errorMessage = FriendlyError.message(for: error)
         }
     }
 }

@@ -25,7 +25,9 @@ nonisolated struct GuestGroup: Codable, Identifiable, Equatable, Sendable {
     }
 
     /// Parses the stored hex color (e.g. "#7C3AED"), falling back to brand purple.
-    var swiftUIColor: Color {
+    /// `@MainActor` because the `Brand` palette is main-actor isolated; this is a
+    /// view-display helper, so that's where it's used anyway.
+    @MainActor var swiftUIColor: Color {
         Color(hex: color) ?? Brand.purple
     }
 }
