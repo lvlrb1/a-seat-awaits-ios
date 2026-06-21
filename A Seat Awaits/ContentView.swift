@@ -12,18 +12,29 @@ struct RootView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        switch appState.phase {
-        case .launching:
-            LaunchView()
-        case .misconfigured(let message):
-            ConfigErrorView(message: message)
-        case .signedOut:
-            OnboardingView()
-        case .signedIn:
+        @Bindable var appState = appState
+        Group {
+            switch appState.phase {
+            case .launching:
+                LaunchView()
+            case .misconfigured(let message):
+                ConfigErrorView(message: message)
+            case .signedOut:
+                OnboardingView()
+            case .signedIn:
+                if let supabase = appState.supabase {
+                    MainTabView(supabase: supabase)
+                } else {
+                    ConfigErrorView(message: "Supabase client unavailable.")
+                }
+            }
+        }
+        // Password-recovery deep link: present the new-password sheet over the app.
+        .sheet(isPresented: $appState.isPresentingPasswordReset) {
             if let supabase = appState.supabase {
-                MainTabView(supabase: supabase)
-            } else {
-                ConfigErrorView(message: "Supabase client unavailable.")
+                ResetPasswordView(supabase: supabase) {
+                    appState.isPresentingPasswordReset = false
+                }
             }
         }
     }

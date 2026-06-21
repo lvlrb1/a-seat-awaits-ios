@@ -15,8 +15,9 @@ struct OnboardingView: View {
     @State private var model: AuthViewModel?
     @State private var stage: Stage = .welcome
     @State private var showPassword = false
+    @State private var showResetSheet = false
 
-    enum Stage { case welcome, form }
+    enum Stage { case welcome, form, verify }
     private enum FormField { case fullName, email, password }
     @FocusState private var focusedField: FormField?
 
@@ -28,6 +29,12 @@ struct OnboardingView: View {
                     welcome(model: model)
                 case .form:
                     formScreen(model: model)
+                case .verify:
+                    EmailVerificationView(model: model) {
+                        model.needsEmailVerification = false
+                        model.mode = .signIn
+                        stage = .form
+                    }
                 }
             } else {
                 ConfigErrorView(message: "Supabase client unavailable.")
@@ -204,7 +211,10 @@ struct OnboardingView: View {
                     // Primary CTA
                     Button {
                         focusedField = nil
-                        Task { await model.submit() }
+                        Task {
+                            await model.submit()
+                            if model.needsEmailVerification { stage = .verify }
+                        }
                     } label: {
                         HStack(spacing: 8) {
                             if model.isSubmitting { ProgressView().tint(.white) }
@@ -278,6 +288,9 @@ struct OnboardingView: View {
                     .accessibilityLabel("Back")
                 }
             }
+            .sheet(isPresented: $showResetSheet) {
+                RequestPasswordResetView(model: model) { showResetSheet = false }
+            }
         }
     }
 
@@ -294,9 +307,13 @@ struct OnboardingView: View {
                     .foregroundStyle(Brand.slate600)
                 Spacer()
                 if !isSignUp {
-                    Button("Forgot?") { Task { await model.sendPasswordReset() } }
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Brand.accent)
+                    Button("Forgot?") {
+                        focusedField = nil
+                        model.prepareReset()
+                        showResetSheet = true
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Brand.accent)
                 }
             }
 

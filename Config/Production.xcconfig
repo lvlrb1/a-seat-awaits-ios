@@ -1,0 +1,17 @@
+// Production environment — applied as the base configuration for the Release
+// build configuration of the "A Seat Awaits" app target.
+//
+// Non-secret build settings only. Real Supabase values live in the gitignored
+// Config/Secrets.Production.plist (see Secrets.Production.example.plist).
+// NOTE: xcconfig treats `//` as a comment, so never put URLs (which contain
+// `//`) here — those belong in the Secrets plist.
+
+APP_ENVIRONMENT = Production
+
+PRODUCT_BUNDLE_IDENTIFIER = heartlineeventsolutionsllc.A-Seat-Awaits
+
+APP_DISPLAY_NAME = A Seat Awaits
+
+// Filename (within Config/) of this environment's Secrets plist. The
+// "Embed Environment Secrets" build phase copies it into the app bundle.
+SECRETS_FILE = Secrets.Production.plist

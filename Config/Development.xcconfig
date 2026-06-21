@@ -1,0 +1,19 @@
+// Development environment — applied as the base configuration for the Debug
+// build configuration of the "A Seat Awaits" app target.
+//
+// Non-secret build settings only. Real Supabase values live in the gitignored
+// Config/Secrets.Development.plist (see Secrets.Development.example.plist).
+// NOTE: xcconfig treats `//` as a comment, so never put URLs (which contain
+// `//`) here — those belong in the Secrets plist.
+
+APP_ENVIRONMENT = Development
+
+// Distinct bundle id so the Dev build installs side-by-side with production.
+PRODUCT_BUNDLE_IDENTIFIER = heartlineeventsolutionsllc.A-Seat-Awaits.dev
+
+// Home-screen name for the Dev build.
+APP_DISPLAY_NAME = A Seat Awaits Dev
+
+// Filename (within Config/) of this environment's Secrets plist. The
+// "Embed Environment Secrets" build phase copies it into the app bundle.
+SECRETS_FILE = Secrets.Development.plist

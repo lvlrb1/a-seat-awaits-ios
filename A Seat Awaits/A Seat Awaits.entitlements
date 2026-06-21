@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Universal links for email flows: /invite/{token}, /auth/confirm, /auth/reset.
+	  Requires the Associated Domains capability on the App ID and an
+	  apple-app-site-association file hosted at
+	  https://aseatawaits.com/.well-known/apple-app-site-association
+	  (see supabase/functions/DEPLOYMENT.md).
+	-->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:aseatawaits.com</string>
+	</array>
+</dict>
+</plist>

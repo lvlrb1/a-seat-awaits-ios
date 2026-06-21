@@ -13,20 +13,38 @@ the app — only the public anon key.
 
 ## Configuration (required before first run)
 
-Environment-specific config lives in `A Seat Awaits/Secrets.plist`, which is
-**git-ignored**. Copy the template and fill in real values:
+The app has two environments selected by the build configuration:
+
+| Scheme | Config | Environment | Bundle id | Supabase |
+| --- | --- | --- | --- | --- |
+| **A Seat Awaits Dev** | Debug | Development | `heartlineeventsolutionsllc.A-Seat-Awaits.dev` | staging project |
+| **A Seat Awaits** | Release | Production | `heartlineeventsolutionsllc.A-Seat-Awaits` | production project |
+
+Per-environment config lives in the top-level `Config/` folder (outside the
+app's synchronized source folder) and is **git-ignored**. Copy each template
+and fill in real values:
 
 ```bash
-cp "A Seat Awaits/Secrets.example.plist" "A Seat Awaits/Secrets.plist"
+cp Config/Secrets.Development.example.plist Config/Secrets.Development.plist
+cp Config/Secrets.Production.example.plist  Config/Secrets.Production.plist
 ```
 
-Set:
+Set in each file:
 
-- `SUPABASE_URL` – your Supabase project URL (e.g. `https://<ref>.supabase.co`)
+- `SUPABASE_URL` – the environment's Supabase project URL (`https://<ref>.supabase.co`)
 - `SUPABASE_ANON_KEY` – the project's **public** anon key (never the service key)
+- `PUBLIC_SITE_URL` – origin for guest-facing share links (staging for dev, `https://aseatawaits.com` for prod)
 
-If `Secrets.plist` is missing or still has placeholders, the app shows a
-"Configuration needed" screen explaining what to do.
+At build time the **Embed Environment Secrets** build phase copies the file
+named by the active configuration's `SECRETS_FILE` setting
+(`Config/Development.xcconfig` / `Config/Production.xcconfig`) into the app
+bundle as `Secrets.plist`, which `AppConfig` reads at runtime. If the required
+file is missing the build **fails** with a clear message — a Release build never
+falls back to development values.
+
+The anon key is a public client credential; row-level security (RLS) is the
+security boundary. Never put a service-role key, Stripe secret, or any server
+credential in these files.
 
 ## Open & run
 

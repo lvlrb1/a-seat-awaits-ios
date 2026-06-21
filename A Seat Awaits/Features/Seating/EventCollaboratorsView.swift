@@ -4,9 +4,10 @@
 //
 //  The per-event Collaborators screen, presented from an event's More tab. Lets
 //  the owner invite people by email + role, copy the resulting invite link, and
-//  manage existing access (change role, remove, revoke pending). Backed entirely
-//  by `EventCollaboratorsStore` (Supabase, RLS-enforced). No email is sent — the
-//  invitee accepts in-app, or the owner shares the copied link manually.
+//  manage existing access (change role, remove, revoke pending), resend a pending
+//  invite, and see delivery status. Invitations are sent via the authenticated
+//  `send-event-invitation` edge function (never Resend, never the Nuxt API);
+//  delivery status comes from the owner-scoped `invitation_delivery_status` RPC.
 //
 
 import SwiftUI
@@ -22,12 +23,8 @@ struct EventCollaboratorsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
-    // Invite form
-    @State private var inviteName = ""
-    @State private var inviteEmail = ""
-    @State private var inviteRole: CollaboratorRole = .viewer
-    @State private var lastInvite: SentInvite?
-    @State private var copied = false
+    // Invite sheet
+    @State private var showInvite = false
 
     @State private var pendingRemoval: EventCollaborator?
 
@@ -64,8 +61,20 @@ struct EventCollaboratorsView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .task { if !store.hasLoaded { await store.load() } }
-            .refreshable { await store.load() }
+            .task {
+                if !store.hasLoaded { await store.load() }
+                await store.loadDeliveryStatuses()
+            }
+            .refreshable {
+                await store.load()
+                await store.loadDeliveryStatuses()
+            }
+            .sheet(isPresented: $showInvite) {
+                InviteCollaboratorView(store: store) {
+                    showInvite = false
+                    Task { await store.load(); await store.loadDeliveryStatuses() }
+                }
+            }
             .alert("Something went wrong",
                    isPresented: Binding(get: { store.errorMessage != nil },
                                         set: { if !$0 { store.errorMessage = nil } })) {
@@ -184,105 +193,18 @@ struct EventCollaboratorsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Brand.warningFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             } else {
-                inviteForm
-            }
-
-            if let invite = lastInvite {
-                sentInviteBanner(invite)
+                Button {
+                    store.errorMessage = nil
+                    showInvite = true
+                } label: {
+                    Label("Invite collaborator", systemImage: "person.crop.circle.badge.plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.primaryBrand)
             }
         }
         .padding(16)
         .brandCard(radius: 18)
-    }
-
-    private var inviteForm: some View {
-        VStack(spacing: 10) {
-            field(icon: "person", placeholder: "Full name", text: $inviteName,
-                  contentType: .name)
-            field(icon: "envelope", placeholder: "Email address", text: $inviteEmail,
-                  contentType: .emailAddress, keyboard: .emailAddress)
-
-            HStack(spacing: 10) {
-                Text("Role")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Brand.textSecondary)
-                Spacer()
-                RolePicker(role: $inviteRole)
-            }
-            .padding(.horizontal, 2)
-
-            Button {
-                Task { await sendInvite() }
-            } label: {
-                HStack(spacing: 8) {
-                    if store.isInviting { ProgressView().tint(.white) }
-                    Text(store.isInviting ? "Sending…" : "Send Invitation")
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.primaryBrand)
-            .disabled(!canSubmit)
-            .opacity(canSubmit ? 1 : 0.5)
-        }
-    }
-
-    private var canSubmit: Bool {
-        !store.isInviting
-            && !inviteName.trimmingCharacters(in: .whitespaces).isEmpty
-            && !inviteEmail.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    private func field(icon: String, placeholder: String, text: Binding<String>,
-                       contentType: UITextContentType? = nil,
-                       keyboard: UIKeyboardType = .default) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Brand.slate400)
-                .frame(width: 20)
-            TextField(placeholder, text: text)
-                .font(.system(size: 15))
-                .textInputAutocapitalization(keyboard == .emailAddress ? .never : .words)
-                .autocorrectionDisabled(keyboard == .emailAddress)
-                .keyboardType(keyboard)
-                .textContentType(contentType)
-        }
-        .padding(12)
-        .background(Brand.control, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private func sentInviteBanner(_ invite: SentInvite) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Invitation created for \(invite.name)", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Brand.success)
-            Text("No email is sent — share this link so they can accept:")
-                .font(.system(size: 12))
-                .foregroundStyle(Brand.textSecondary)
-            HStack(spacing: 8) {
-                Text(invite.url.absoluteString)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Brand.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 6)
-                Button {
-                    copyLink(invite.url)
-                } label: {
-                    Label(copied ? "Copied" : "Copy",
-                          systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Brand.accent)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(10)
-            .background(Brand.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Brand.hairline, lineWidth: 1))
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Brand.plumChipFillSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - Team list
@@ -356,11 +278,18 @@ struct EventCollaboratorsView: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
                 if person.isPending {
-                    Text("Pending • \(person.role.label)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Brand.warningText)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Brand.warningFill, in: Capsule())
+                    HStack(spacing: 6) {
+                        Text("Pending • \(person.role.label)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Brand.warningText)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Brand.warningFill, in: Capsule())
+                        if let status = store.deliveryStatus(for: person), status != .pending {
+                            Text(status.label)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(status.isFailure ? Brand.danger : Brand.textSecondary)
+                        }
+                    }
                 }
             }
 
@@ -392,8 +321,16 @@ struct EventCollaboratorsView: View {
                 }
                 .accessibilityLabel("More actions for \(person.displayName)")
             }
+        } else if store.isResending(person) {
+            ProgressView()
         } else {
             Menu {
+                let status = store.deliveryStatus(for: person)
+                if status?.canResend ?? true {
+                    Button { Task { await store.resendInvite(person) } } label: {
+                        Label("Resend invitation", systemImage: "paperplane")
+                    }
+                }
                 if let link = store.inviteLink(for: person) {
                     Button { copyLink(link) } label: {
                         Label("Copy invite link", systemImage: "doc.on.doc")
@@ -413,30 +350,11 @@ struct EventCollaboratorsView: View {
 
     // MARK: - Actions
 
-    private func sendInvite() async {
-        let url = await store.invite(name: inviteName, email: inviteEmail, role: inviteRole)
-        guard let url else { return }
-        lastInvite = SentInvite(name: inviteName.trimmingCharacters(in: .whitespaces), url: url)
-        copied = false
-        inviteName = ""
-        inviteEmail = ""
-        inviteRole = .viewer
-    }
-
     private func copyLink(_ url: URL) {
         #if canImport(UIKit)
         UIPasteboard.general.string = url.absoluteString
         #endif
-        withAnimation { copied = true }
     }
-}
-
-// MARK: - Sent-invite banner model
-
-private struct SentInvite: Identifiable, Equatable {
-    let id = UUID()
-    let name: String
-    let url: URL
 }
 
 // MARK: - Viewer / Editor picker

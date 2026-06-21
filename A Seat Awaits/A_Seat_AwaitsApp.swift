@@ -17,6 +17,9 @@ struct A_Seat_AwaitsApp: App {
                 .environment(appState)
                 .tint(Brand.plum)
                 .task { await appState.bootstrap() }
+                .onOpenURL { url in
+                    Task { await appState.handleDeepLink(url) }
+                }
         }
     }
 }

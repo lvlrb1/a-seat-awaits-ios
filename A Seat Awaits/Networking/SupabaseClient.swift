@@ -180,6 +180,28 @@ actor SupabaseClient {
         return updated
     }
 
+    /// Fetches the GoTrue user for an arbitrary access token (not the cached one).
+    private func fetchUser(withAccessToken token: String) async throws -> AuthUser {
+        let data = try await userRequest(method: "GET", body: Optional<EmptyBody>.none, accessToken: token)
+        return try decode(AuthUser.self, from: data)
+    }
+
+    /// Establishes a session from password-recovery deep-link tokens so the user
+    /// can set a new password, then returns the recovered user. Tokens are never
+    /// logged. Used by the recovery universal link.
+    @discardableResult
+    func applyRecoverySession(accessToken: String,
+                              refreshToken: String,
+                              expiresIn: TimeInterval? = nil) async throws -> AuthUser {
+        let user = try await fetchUser(withAccessToken: accessToken)
+        let session = AuthSession(accessToken: accessToken,
+                                  refreshToken: refreshToken,
+                                  expiresAt: Date().timeIntervalSince1970 + (expiresIn ?? 3600),
+                                  user: user)
+        setSession(session)
+        return user
+    }
+
     /// Verifies the supplied password by performing a password grant for the
     /// current email. On success the session is refreshed with the new tokens;
     /// on failure it throws (the caller surfaces "incorrect password"). Used to
@@ -264,9 +286,85 @@ actor SupabaseClient {
         return try decode(T.self, from: data)
     }
 
+    // MARK: - Edge Functions
+
+    /// Invokes an authenticated Edge Function at `functions/v1/{name}`, attaching
+    /// the anon apikey and a freshly-refreshed Bearer token. Decodes a structured
+    /// success body, or throws `EdgeFunctionError` carrying the server's safe
+    /// message and (for 429) cooldown. An expired session surfaces as
+    /// `.sessionExpired`. Never logs JWTs or payloads.
+    func invokeFunction<Body: Encodable & Sendable, T: Decodable & Sendable>(
+        _ name: String, body: Body, as type: T.Type) async throws -> T {
+        let token: String
+        do {
+            token = try await validAccessToken()
+        } catch {
+            throw EdgeFunctionError.sessionExpired
+        }
+        let data = try await functionRequest(name: name, body: body, accessToken: token)
+        return try decode(T.self, from: data)
+    }
+
+    /// Invokes a public (pre-sign-in) Edge Function with only the anon apikey and
+    /// no Bearer token — used by verification / password-reset before sign-in.
+    func invokePublicFunction<Body: Encodable & Sendable, T: Decodable & Sendable>(
+        _ name: String, body: Body, as type: T.Type) async throws -> T {
+        let data = try await functionRequest(name: name, body: body, accessToken: nil)
+        return try decode(T.self, from: data)
+    }
+
     // MARK: - Request plumbing
 
     private struct EmptyBody: Encodable {}
+
+    private func functionRequest<Body: Encodable>(name: String,
+                                                  body: Body,
+                                                  accessToken: String?) async throws -> Data {
+        var request = URLRequest(url: baseURL.appendingPathComponent("functions/v1/\(name)"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        if let accessToken {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try encoder.encode(body)
+        return try await performFunction(request)
+    }
+
+    /// Like `perform`, but decodes the edge functions' structured error body so
+    /// the UI can read the safe message + `retryAfterSeconds` cooldown.
+    private func performFunction(_ request: URLRequest) async throws -> Data {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await urlSession.data(for: request)
+        } catch {
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .notConnectedToInternet, .networkConnectionLost,
+                     .timedOut, .cannotConnectToHost, .cannotFindHost,
+                     .dataNotAllowed, .internationalRoamingOff:
+                    throw SupabaseError.offline
+                default:
+                    break
+                }
+            }
+            throw SupabaseError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw SupabaseError.transport("No HTTP response.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 401 { throw EdgeFunctionError.sessionExpired }
+            let parsed = try? decoder.decode(EdgeErrorBody.self, from: data)
+            throw EdgeFunctionError.http(status: http.statusCode,
+                                         message: parsed?.error ?? "",
+                                         code: parsed?.code,
+                                         retryAfterSeconds: parsed?.retryAfterSeconds)
+        }
+        return data
+    }
 
     private func authRequest<Body: Encodable>(path: String,
                                               query: [URLQueryItem] = [],

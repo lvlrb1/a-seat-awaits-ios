@@ -36,6 +36,36 @@ final class AppState {
 
     var currentUserId: String? { currentUser?.id }
 
+    // MARK: - Deep links
+
+    /// A pending `/invite/{token}` awaiting handling (e.g. accept-after-sign-in).
+    var pendingInviteToken: String?
+    /// Drives presentation of the password-reset sheet after a recovery link.
+    var isPresentingPasswordReset = false
+
+    /// Routes an incoming universal/custom-scheme URL. Tokens are never logged.
+    func handleDeepLink(_ url: URL) async {
+        switch DeepLinkRouter.parse(url) {
+        case .inviteToken(let token):
+            pendingInviteToken = token
+        case .recovery(let accessToken, let refreshToken):
+            guard let supabase else { return }
+            if let user = try? await supabase.applyRecoverySession(accessToken: accessToken,
+                                                                   refreshToken: refreshToken) {
+                phase = .signedIn(user)
+                isPresentingPasswordReset = true
+            }
+        case .emailConfirmed(let accessToken, let refreshToken):
+            guard let supabase else { return }
+            if let user = try? await supabase.applyRecoverySession(accessToken: accessToken,
+                                                                   refreshToken: refreshToken) {
+                phase = .signedIn(user)
+            }
+        case .unhandled:
+            break
+        }
+    }
+
     init() {
         do {
             let config = try AppConfig.load()

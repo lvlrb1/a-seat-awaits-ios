@@ -21,3 +21,9 @@ Package.resolved
 Secrets.plist
 A Seat Awaits/Secrets.plist
 *.local.xcconfig
+
+# Populated per-environment config files. The anon key is a public client
+# credential, but populated files are still kept out of source control.
+# The committed *.example.plist templates document the expected shape.
+Config/Secrets.*.plist
+!Config/Secrets.*.example.plist

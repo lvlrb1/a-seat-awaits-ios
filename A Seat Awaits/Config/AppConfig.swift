@@ -3,8 +3,12 @@
 //  A Seat Awaits
 //
 //  Loads environment-specific configuration (Supabase URL + public anon key)
-//  from `Secrets.plist`, which is kept out of source control. A committed
-//  `Secrets.example.plist` documents the expected shape.
+//  from `Secrets.plist` in the app bundle. The bundle's `Secrets.plist` is
+//  produced at build time by the "Embed Environment Secrets" build phase, which
+//  copies the per-environment file selected by the active build configuration
+//  (Config/Secrets.Development.plist for Debug, Config/Secrets.Production.plist
+//  for Release). Those files are kept out of source control; committed
+//  `Config/Secrets.*.example.plist` templates document the expected shape.
 //
 
 import Foundation
@@ -22,7 +26,7 @@ enum AppConfig {
         var errorDescription: String? {
             switch self {
             case .missingSecretsFile:
-                return "Secrets.plist was not found in the app bundle. Copy Secrets.example.plist to Secrets.plist and fill in your Supabase URL and anon key."
+                return "Secrets.plist was not found in the app bundle. The \"Embed Environment Secrets\" build phase copies the per-environment file (Config/Secrets.Development.plist for Debug, Config/Secrets.Production.plist for Release) into the bundle — copy the matching Config/*.example.plist and fill in your Supabase URL and anon key."
             case .missingKey(let key):
                 return "Secrets.plist is missing the required key \"\(key)\"."
             case .invalidURL(let value):

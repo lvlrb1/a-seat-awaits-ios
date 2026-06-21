@@ -38,6 +38,17 @@ final class EventCollaboratorsStore {
     private(set) var isInviting = false
     private(set) var updatingRoleIDs: Set<String> = []
     private(set) var deletingIDs: Set<String> = []
+    private(set) var resendingIDs: Set<String> = []
+
+    /// Per-invitation email delivery status (id -> status), surfaced to the owner
+    /// via the owner-scoped `invitation_delivery_status` RPC. Never exposes raw
+    /// provider errors.
+    private(set) var deliveryStatuses: [String: EmailDeliveryStatus] = [:]
+
+    /// The email service backed by the authenticated Supabase client. Sending and
+    /// resending invitations runs through trusted edge functions (never Resend).
+    @ObservationIgnored
+    private lazy var emailService = EmailService(invoker: supabase)
 
     // Cached authoritative rows backing the current list.
     private var shares: [EventShareRecord] = []
@@ -261,6 +272,93 @@ final class EventCollaboratorsStore {
         return EventInviteURL.make(base: siteURL, token: token)
     }
 
+    // MARK: - Email invitations (edge function path)
+
+    /// Sends a collaboration invitation *email* via the `send-event-invitation`
+    /// edge function (the canonical path now that email exists). Performs the same
+    /// client-side guard rails for instant feedback, but the server re-enforces
+    /// ownership, plan limits, suppression, and dedupe. Reloads the list on
+    /// success so the new pending row appears. Returns the safe summary, or nil on
+    /// failure (with `errorMessage` set).
+    @discardableResult
+    func sendEmailInvite(name: String, email: String, role: CollaboratorRole) async -> InvitationSummary? {
+        guard !isInviting else { return nil }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedEmail = CollaboratorsOverview.normalize(email: email)
+
+        guard !trimmedName.isEmpty else { errorMessage = "Enter the collaborator's name."; return nil }
+        guard EmailValidator.isValid(normalizedEmail) else { errorMessage = "Enter a valid email address."; return nil }
+        guard policy.isCollaborationEnabled else { errorMessage = "Your current plan doesn't include collaboration."; return nil }
+        guard !isAtLimit else {
+            errorMessage = "This event already has the maximum of \(maxCount) collaborators for your \(policy.planDisplayName) plan."
+            return nil
+        }
+        if collaborators.contains(where: { $0.normalizedEmail == normalizedEmail }) {
+            errorMessage = "\(email) already has access to this event (or a pending invite)."
+            return nil
+        }
+
+        isInviting = true
+        defer { isInviting = false }
+        errorMessage = nil
+
+        do {
+            let response = try await emailService.sendInvitation(
+                eventId: event.id, inviteeName: trimmedName, inviteeEmail: normalizedEmail, role: role)
+            await load() // pull the server-created pending row into the list
+            deliveryStatuses[response.invitation.id] = response.invitation.deliveryStatus
+            return response.invitation
+        } catch {
+            errorMessage = friendlyMessage(error)
+            return nil
+        }
+    }
+
+    /// Re-sends a pending invitation email. The server enforces cooldown + limits;
+    /// a 429 cooldown surfaces as a friendly message.
+    @discardableResult
+    func resendInvite(_ collaborator: EventCollaborator) async -> InvitationSummary? {
+        guard collaborator.isPending, !resendingIDs.contains(collaborator.id) else { return nil }
+        resendingIDs.insert(collaborator.id)
+        defer { resendingIDs.remove(collaborator.id) }
+        errorMessage = nil
+        do {
+            let response = try await emailService.resendInvitation(invitationId: collaborator.id)
+            deliveryStatuses[response.invitation.id] = response.invitation.deliveryStatus
+            return response.invitation
+        } catch {
+            errorMessage = friendlyMessage(error)
+            return nil
+        }
+    }
+
+    /// Loads owner-scoped delivery statuses for this event's pending invitations.
+    func loadDeliveryStatuses() async {
+        do {
+            let rows = try await supabase.rpc(
+                "invitation_delivery_status",
+                params: InvitationStatusParams(p_event_id: event.id),
+                as: [InvitationDeliveryStatusRow].self)
+            var map: [String: EmailDeliveryStatus] = [:]
+            for row in rows { map[row.id] = row.deliveryStatus }
+            deliveryStatuses = map
+        } catch {
+            // Non-fatal: status badges simply won't show. Don't disturb the screen.
+        }
+    }
+
+    func deliveryStatus(for collaborator: EventCollaborator) -> EmailDeliveryStatus? {
+        deliveryStatuses[collaborator.id]
+    }
+
+    func isResending(_ c: EventCollaborator) -> Bool { resendingIDs.contains(c.id) }
+
+    private func friendlyMessage(_ error: Error) -> String {
+        if let edge = error as? EdgeFunctionError { return edge.errorDescription ?? "Something went wrong." }
+        return CollaboratorsStore.message(for: error)
+    }
+
     // MARK: - Manage (active shares)
 
     func changeRole(_ collaborator: EventCollaborator, to newRole: CollaboratorRole) async {
@@ -364,6 +462,10 @@ nonisolated enum EmailValidator {
 
 private nonisolated struct ResolveEventNamesParams: Encodable, Sendable {
     let p_emails: [String]
+}
+
+private nonisolated struct InvitationStatusParams: Encodable, Sendable {
+    let p_event_id: String
 }
 
 private nonisolated struct NewInvitationDTO: Encodable, Sendable {
