@@ -17,7 +17,14 @@ struct CollaboratorsView: View {
     @State private var expandedEventIDs: Set<String> = []
     @State private var pendingAction: PendingDestructiveAction?
 
+    // Invite flow (inviting is per-event; we pick an event, then reuse the
+    // per-event store + invite form).
+    @State private var showEventPicker = false
+    @State private var inviteContext: InviteContext?
+    @State private var isPreparingInvite = false
+
     @Environment(\.openURL) private var openURL
+    @Environment(AppState.self) private var appState
 
     private static let subscriptionURL = URL(string: "https://aseatawaits.com/subscription")!
 
@@ -49,6 +56,16 @@ struct CollaboratorsView: View {
         .navigationTitle("Collaborators")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+        .toolbar {
+            if canInvite {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { startInvite() } label: {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                    }
+                    .accessibilityLabel("Invite collaborator")
+                }
+            }
+        }
         .task {
             if store.overview == nil { await store.load() }
         }
@@ -72,6 +89,60 @@ struct CollaboratorsView: View {
         } message: { action in
             Text(action.message)
         }
+        .sheet(isPresented: $showEventPicker) {
+            InviteEventPicker(events: store.overview?.events ?? []) { summary in
+                showEventPicker = false
+                beginInvite(for: summary)
+            }
+        }
+        .sheet(item: $inviteContext) { context in
+            InviteCollaboratorView(store: context.store) {
+                inviteContext = nil
+                Task { await store.load() }
+            }
+        }
+        .overlay {
+            if isPreparingInvite {
+                ZStack {
+                    Color.black.opacity(0.04).ignoresSafeArea()
+                    ProgressView()
+                }
+            }
+        }
+    }
+
+    // MARK: - Invite flow
+
+    /// Inviting requires collaboration on the plan and at least one owned event.
+    private var canInvite: Bool {
+        guard let overview = store.overview else { return false }
+        return overview.policy.isCollaborationEnabled && !overview.events.isEmpty
+    }
+
+    /// Entry point from the toolbar / empty-state button. Skips the picker when
+    /// there's only one event to invite to.
+    private func startInvite() {
+        guard let events = store.overview?.events, !events.isEmpty else { return }
+        if events.count == 1 {
+            beginInvite(for: events[0])
+        } else {
+            showEventPicker = true
+        }
+    }
+
+    /// Builds a per-event store for the chosen event, loads it (so plan limits and
+    /// duplicate checks are in place), then presents the shared invite form.
+    private func beginInvite(for summary: CollaboratorEventSummary) {
+        let event = Event(id: summary.eventId, name: summary.eventName,
+                          ownerId: appState.currentUserId ?? "")
+        let inviteStore = EventCollaboratorsStore(
+            event: event, supabase: supabase, siteURL: appState.publicSiteURL)
+        isPreparingInvite = true
+        Task {
+            await inviteStore.load()
+            isPreparingInvite = false
+            inviteContext = InviteContext(store: inviteStore)
+        }
     }
 
     // MARK: - By-event section
@@ -83,9 +154,19 @@ struct CollaboratorsView: View {
                 title: "No events yet",
                 message: "Create an event first, then invite people to collaborate on it.")
         } else if overview.isEmpty {
-            emptyState(
-                title: "No collaborators yet",
-                message: "Invite people to collaborate on your events to manage them here.")
+            VStack(spacing: 16) {
+                emptyState(
+                    title: "No collaborators yet",
+                    message: "Invite people to collaborate on your events to manage them here.")
+                if canInvite {
+                    Button { startInvite() } label: {
+                        Label("Invite collaborator", systemImage: "person.crop.circle.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.primaryBrand)
+                    .frame(maxWidth: 280)
+                }
+            }
         } else {
             HStack {
                 Text("Collaborators by Event")
@@ -215,6 +296,56 @@ private enum PendingDestructiveAction: Identifiable {
             return "\(c.displayName) will lose access to “\(eventName)” but will retain access to any other events you’ve shared with them."
         case .removeFromAll(let p):
             return "This will revoke \(p.displayName)’s access to every event you own and cancel their pending invitations. This action cannot be undone."
+        }
+    }
+}
+
+// MARK: - Invite presentation helpers
+
+/// Identifiable wrapper so the invite form can be presented via `.sheet(item:)`
+/// with a freshly built, pre-loaded per-event store.
+private struct InviteContext: Identifiable {
+    let id = UUID()
+    let store: EventCollaboratorsStore
+}
+
+/// Lets the owner pick which event to invite someone to when they own more than
+/// one. Single-event owners never see this — they go straight to the form.
+private struct InviteEventPicker: View {
+    let events: [CollaboratorEventSummary]
+    let onSelect: (CollaboratorEventSummary) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(events) { event in
+                Button { onSelect(event) } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(event.eventName)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Brand.textPrimary)
+                            Text("\(event.currentCount)/\(event.maxCount) collaborators")
+                                .font(.system(size: 13))
+                                .foregroundStyle(event.isAtLimit ? Brand.warningText : Brand.textSecondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Brand.slate300)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("Choose an event")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
         }
     }
 }

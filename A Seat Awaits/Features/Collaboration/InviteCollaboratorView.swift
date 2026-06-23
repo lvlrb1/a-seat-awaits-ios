@@ -17,7 +17,7 @@ struct InviteCollaboratorView: View {
 
     @State private var name = ""
     @State private var email = ""
-    @State private var role: CollaboratorRole = .viewer
+    @State private var role: CollaboratorRole = .editor
     @State private var result: InvitationSummary?
     @FocusState private var focused: Field?
 
@@ -83,8 +83,8 @@ struct InviteCollaboratorView: View {
                 .padding(.top, 4)
 
             Picker("Role", selection: $role) {
-                Text("Viewer").tag(CollaboratorRole.viewer)
                 Text("Editor").tag(CollaboratorRole.editor)
+                Text("Viewer").tag(CollaboratorRole.viewer)
             }
             .pickerStyle(.segmented)
 

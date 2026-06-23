@@ -56,3 +56,14 @@ nonisolated struct Event: Codable, Identifiable, Equatable, Sendable {
         return f
     }()
 }
+
+extension Event {
+    /// A minimal reference to an owned event, sufficient for screens that only
+    /// need its identity (e.g. inviting a collaborator from the account-wide
+    /// Collaborators screen, which loads event summaries rather than full rows).
+    init(id: String, name: String, ownerId: String) {
+        self.init(id: id, name: name, date: nil, location: nil, description: nil,
+                  ownerId: ownerId, qrCodeToken: nil, roomWidthFt: nil, roomHeightFt: nil,
+                  slug: nil, createdAt: nil, updatedAt: nil)
+    }
+}
