@@ -361,6 +361,19 @@ final class SeatingStore {
         return guest
     }
 
+    /// Runs a pasted/CSV list or an Excel file through the `ai-import-guests`
+    /// Edge Function (column-aware AI extraction — adults, partners and children,
+    /// parity with the web app) and returns the structured `ParsedGuest`s for
+    /// review. Throws on plan/rate-limit/AI failure or transport error —
+    /// `ImportGuestsView` falls back to the on-device `GuestImportParser` so the
+    /// import flow always works offline.
+    func aiStructureGuests(_ input: GuestImportInput) async throws -> [ParsedGuest] {
+        let service = GuestImportService(invoker: supabase)
+        let response = try await service.aiImport(eventId: event.id, input: input)
+        markReachable()
+        return response.parsedGuests()
+    }
+
     /// Assigns (or, with `nil`, unassigns) a guest to a table. Optimistically
     /// updates local state and rolls back on failure.
     func assign(_ guest: Guest, toTable tableId: String?) async {
@@ -605,6 +618,19 @@ final class SeatingStore {
         }
     }
 
+    /// Commits a rotation from the canvas twist gesture. Like `updatePosition`,
+    /// the local model is updated *synchronously* so the gesture can clear its
+    /// live state in the same render pass without the item flashing back to its
+    /// old angle; the write happens in the background.
+    func commitRotation(of table: SeatingTable, to degrees: Double) {
+        let normalized = ((degrees.truncatingRemainder(dividingBy: 360)) + 360)
+            .truncatingRemainder(dividingBy: 360)
+        if let index = tables.firstIndex(where: { $0.id == table.id }) {
+            tables[index].rotation = normalized
+        }
+        Task { await updateRotation(of: table, to: normalized) }
+    }
+
     /// Persists a table's rotation (normalised to 0..<360). Used by the canvas
     /// "Rotate 15°" affordance.
     func updateRotation(of table: SeatingTable, to degrees: Double) async {
@@ -813,6 +839,16 @@ final class SeatingStore {
         } catch {
             report(error)
         }
+    }
+
+    /// Commits a shape rotation from the canvas twist gesture. See `commitRotation`.
+    func commitShapeRotation(of shape: DecorShape, to degrees: Double) {
+        let normalized = ((degrees.truncatingRemainder(dividingBy: 360)) + 360)
+            .truncatingRemainder(dividingBy: 360)
+        if let index = shapes.firstIndex(where: { $0.id == shape.id }) {
+            shapes[index].rotation = normalized
+        }
+        Task { await updateShapeRotation(of: shape, to: normalized) }
     }
 
     /// Persists a shape's rotation (normalised to 0..<360).
@@ -1026,7 +1062,7 @@ final class SeatingStore {
                 let dtos = priorRooms.map { r in
                     NewRoomDTO(event_id: event.id, name: r.name,
                                width_ft: r.widthFt, height_ft: r.heightFt,
-                               position_x: r.positionX ?? 0, position_y: r.positionY ?? 0,
+                               position_x: r.positionX, position_y: r.positionY,
                                color: r.color, sort_order: r.sortOrder)
                 }
                 newRooms = try await supabase.insert("floorplan_rooms", values: dtos, returning: [FloorPlanRoom].self)

@@ -16,6 +16,7 @@ struct GuestDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTableId: String?
     @State private var isSaving = false
+    @State private var tableSearch = ""
 
     init(store: SeatingStore, guest: Guest) {
         self.store = store
@@ -23,36 +24,25 @@ struct GuestDetailSheet: View {
         _selectedTableId = State(initialValue: guest.tableId)
     }
 
-    // The table the CTA will seat the guest at (defaults to current/best match).
+    // The table the CTA will seat the guest at. Defaults to the guest's current
+    // table; for an unassigned guest nothing is pre-selected until the user taps one.
     private var targetTableId: String? {
-        selectedTableId ?? guest.tableId ?? bestMatchTableId
+        selectedTableId ?? guest.tableId
+    }
+
+    // Tables in numeric-aware name order, filtered by the search field.
+    private var visibleTables: [SeatingTable] {
+        let sorted = SeatingLogic.sortedTables(store.tables, by: .nameAZ, guests: store.guests)
+        let query = tableSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return sorted }
+        return sorted.filter { table in
+            table.name.localizedCaseInsensitiveContains(query)
+                || (table.description?.localizedCaseInsensitiveContains(query) ?? false)
+        }
     }
 
     private var targetTableName: String? {
         store.table(withId: targetTableId)?.name
-    }
-
-    // Best match = same group if any has open seats, else most open seats.
-    private var bestMatchTableId: String? {
-        let candidates = store.tables.filter { table in
-            guard let remaining = SeatingLogic.remainingSeats(table, guests: store.guests) else { return true }
-            return remaining > 0
-        }
-        // Prefer a table matching the guest's group name.
-        if let groupName = guest.groupName?.nilIfBlank {
-            let grouped = candidates.filter {
-                ($0.description?.localizedCaseInsensitiveContains(groupName) ?? false)
-                    || $0.name.localizedCaseInsensitiveContains(groupName)
-            }
-            if let best = grouped.max(by: { openSeats($0) < openSeats($1) }) {
-                return best.id
-            }
-        }
-        return candidates.max(by: { openSeats($0) < openSeats($1) })?.id
-    }
-
-    private func openSeats(_ table: SeatingTable) -> Int {
-        SeatingLogic.remainingSeats(table, guests: store.guests) ?? .max
     }
 
     var body: some View {
@@ -177,9 +167,19 @@ struct GuestDetailSheet: View {
                     .foregroundStyle(Brand.textSecondary)
                     .padding(.vertical, 8)
             } else {
-                VStack(spacing: 9) {
-                    ForEach(store.tables) { table in
-                        tableRow(table)
+                SearchField(text: $tableSearch, placeholder: "Search tables", height: 42)
+
+                let tables = visibleTables
+                if tables.isEmpty {
+                    Text("No tables match “\(tableSearch)”.")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Brand.textSecondary)
+                        .padding(.vertical, 8)
+                } else {
+                    LazyVStack(spacing: 9) {
+                        ForEach(tables) { table in
+                            tableRow(table)
+                        }
                     }
                 }
             }
@@ -189,7 +189,6 @@ struct GuestDetailSheet: View {
 
     private func tableRow(_ table: SeatingTable) -> some View {
         let remaining = SeatingLogic.remainingSeats(table, guests: store.guests)
-        let isBest = table.id == bestMatchTableId
         let isSelected = targetTableId == table.id
         let isFull = (remaining ?? 1) == 0 && guest.tableId != table.id
 
@@ -201,16 +200,17 @@ struct GuestDetailSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tableTitle(table))
                         .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Brand.textPrimary)
-                    Text(seatsLine(remaining: remaining, isBest: isBest, isFull: isFull))
+                        .foregroundStyle(isSelected ? Brand.plum : Brand.textPrimary)
+                    Text(seatsLine(remaining: remaining, isFull: isFull))
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(seatsColor(remaining: remaining, isBest: isBest, isFull: isFull))
+                        .foregroundStyle(seatsColor(remaining: remaining, isFull: isFull, isSelected: isSelected))
                 }
                 Spacer(minLength: 4)
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundStyle(Brand.accent)
+                        .foregroundStyle(Brand.plum)
+                        .accessibilityLabel("Selected")
                 }
             }
             .padding(.horizontal, 15)
@@ -255,21 +255,19 @@ struct GuestDetailSheet: View {
         return Initials.from(table.name)
     }
 
-    private func seatsLine(remaining: Int?, isBest: Bool, isFull: Bool) -> String {
+    private func seatsLine(remaining: Int?, isFull: Bool) -> String {
         if isFull { return "Full" }
-        let base: String
         if let remaining {
-            base = "\(remaining) seat\(remaining == 1 ? "" : "s") open"
-        } else {
-            base = "Open seating"
+            return "\(remaining) seat\(remaining == 1 ? "" : "s") open"
         }
-        return isBest ? "\(base) · best match" : base
+        return "Open seating"
     }
 
-    private func seatsColor(remaining: Int?, isBest: Bool, isFull: Bool) -> Color {
+    private func seatsColor(remaining: Int?, isFull: Bool, isSelected: Bool) -> Color {
         if isFull { return Brand.danger }
-        if isBest { return Brand.success }
-        return Brand.textSecondary
+        // Selected rows sit on a fixed light lavender background in both modes,
+        // so keep the subtitle dark enough to read instead of the mode-aware secondary.
+        return isSelected ? Brand.slate600 : Brand.textSecondary
     }
 
     // MARK: - CTA

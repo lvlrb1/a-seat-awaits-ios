@@ -54,7 +54,12 @@ nonisolated enum FloorPlanPDFRenderer {
 
 // MARK: - Renderer
 
-private final class Renderer {
+// `nonisolated` so the renderer can run entirely off the main actor (it only
+// touches value-type model data + thread-confined UIKit types). Without this,
+// the project's `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` setting would infer
+// this class as @MainActor, making its init / makeData() / byLastName
+// main-actor-isolated and unreachable from the nonisolated `render` entry point.
+private nonisolated final class Renderer {
     let event: Event
     let tables: [SeatingTable]
     let guests: [Guest]

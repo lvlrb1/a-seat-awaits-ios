@@ -2,9 +2,10 @@
 //  GuestImportParser.swift
 //  A Seat Awaits
 //
-//  On-device guest import parser. The backend's AI import is a web-only Nuxt
-//  API the iOS app cannot reach, so this is a pure, network-free heuristic
-//  parser that turns messy pasted/CSV text into structured `ParsedGuest`s.
+//  On-device guest import parser. AI import now runs server-side via the
+//  `ai-import-guests` Supabase Edge Function (see `GuestImportService`); this
+//  pure, network-free heuristic parser is the OFFLINE FALLBACK used when that
+//  call fails — it turns messy pasted/CSV text into structured `ParsedGuest`s.
 //
 //  Kept deliberately pure (no SwiftUI, no I/O) so it is fully unit-testable.
 //

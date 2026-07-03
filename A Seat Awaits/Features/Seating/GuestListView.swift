@@ -165,8 +165,8 @@ struct GuestListView: View {
                     HStack(spacing: 8) {
                         let stats = store.stats
                         chip(.all,        title: "All",      count: stats.total,    bg: Brand.plum)
-                        chip(.assigned,   title: "Assigned", count: stats.assigned, bg: Brand.success)
                         chip(.open,       title: "Open",     count: stats.open,     bg: Brand.warning)
+                        chip(.assigned,   title: "Assigned", count: stats.assigned, bg: Brand.success)
                         chip(.households, title: "Households", count: nil,          bg: Brand.plum)
                     }
                 }

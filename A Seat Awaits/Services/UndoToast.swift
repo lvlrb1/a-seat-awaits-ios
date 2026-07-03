@@ -21,7 +21,9 @@ import UIKit
 @Observable
 final class UndoToast {
     /// How long an undo affordance stays actionable. The audit requires ≥5s.
-    static let defaultDuration: TimeInterval = 5
+    /// `nonisolated` so it can be referenced from default-argument position
+    /// (evaluated in a nonisolated context) under the Swift 6 language mode.
+    nonisolated static let defaultDuration: TimeInterval = 5
 
     private(set) var message: String?
     private(set) var actionTitle: String = "Undo"

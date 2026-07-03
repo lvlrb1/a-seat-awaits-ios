@@ -79,18 +79,28 @@ enum Brand {
     /// Bright violet used for avatar initials & sparkles (`#7C3AED`).
     static let purple = Color.hex("#7C3AED")
 
-    // Status — light
+    // Status — light-mode base hex (wrapped by the scheme-resolving tokens below;
+    // do not reference these directly outside this file — use Brand.successText etc).
     static let success = Color.hex("#16A34A")     // seated / assigned (dot, ring)
-    static let successText = Color.hex("#15803D")  // seated text on tint
-    static let successFill = Color.hex("#DCFCE7")  // seated chip fill
-    static let successBorder = Color.hex("#BBF7D0")
+    private static let successTextLight = Color.hex("#15803D")  // seated text on tint
+    private static let successFillLight = Color.hex("#DCFCE7")  // seated chip fill
+    private static let successBorderLight = Color.hex("#BBF7D0")
     static let warning = Color.hex("#F59E0B")      // open / unassigned
-    static let warningText = Color.hex("#B45309")  // amber text on tint
-    static let warningFill = Color.hex("#FEF3C7")  // amber chip fill
-    static let warningBorder = Color.hex("#FDE68A")
-    static let inviteBg = Color.hex("#FFFBEB")
-    static let inviteSubtitle = Color.hex("#92400E")
+    private static let warningTextLight = Color.hex("#B45309")  // amber text on tint
+    private static let warningFillLight = Color.hex("#FEF3C7")  // amber chip fill
+    private static let warningBorderLight = Color.hex("#FDE68A")
+    private static let inviteBgLight = Color.hex("#FFFBEB")
+    private static let inviteSubtitleLight = Color.hex("#92400E")
     static let danger = Color.hex("#DC2626")
+
+    // Status — dark-mode fills/borders (chip backgrounds need a dark tint here;
+    // the light hex values above are pale creams/pastels that read as
+    // near-white-on-near-white once text switches to `textPrimary`'s white in
+    // dark mode).
+    private static let successFillDark = Color.hex("#052E16")
+    private static let successBorderDark = Color.hex("#166534")
+    private static let warningFillDark = Color.hex("#451A03")
+    private static let warningBorderDark = Color.hex("#92400E")
 
     /// Muted mauve used for floor-plan seat rings (open seats / chair outlines).
     static let seatRing = Color.hex("#8C7A9C")
@@ -156,6 +166,22 @@ enum Brand {
     static var alignmentGuide: Color { .dynamic(Color.hex("#DB2777"), Color.hex("#F472B6")) }
     /// Floor-plan collision/overlap warning outline (red).
     static var collisionStroke: Color { .dynamic(Color.hex("#DC2626"), Color.hex("#F87171")) }
+    /// Seated/success chip text — brightens for contrast in dark mode.
+    static var successText: Color { .dynamic(successTextLight, successDark) }
+    /// Seated/success chip fill.
+    static var successFill: Color { .dynamic(successFillLight, successFillDark) }
+    /// Seated/success chip border.
+    static var successBorder: Color { .dynamic(successBorderLight, successBorderDark) }
+    /// Open/warning chip text — brightens for contrast in dark mode.
+    static var warningText: Color { .dynamic(warningTextLight, warningDark) }
+    /// Open/warning chip fill.
+    static var warningFill: Color { .dynamic(warningFillLight, warningFillDark) }
+    /// Open/warning chip border.
+    static var warningBorder: Color { .dynamic(warningBorderLight, warningBorderDark) }
+    /// Highlighted/"review" row background (invite banners, AI-import flags).
+    static var inviteBg: Color { .dynamic(inviteBgLight, warningFillDark) }
+    /// Text on `inviteBg`.
+    static var inviteSubtitle: Color { .dynamic(inviteSubtitleLight, warningDark) }
 
     // Gradients
     /// Back-compat light-mode hero gradient.

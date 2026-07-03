@@ -130,7 +130,8 @@ enum SeatingLogic {
                              by sort: TableSort,
                              guests: [Guest]) -> [SeatingTable] {
         func byName(_ lhs: SeatingTable, _ rhs: SeatingTable) -> Bool {
-            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            // Numeric-aware compare so "Table 2" precedes "Table 10".
+            lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
         switch sort {
         case .nameAZ:

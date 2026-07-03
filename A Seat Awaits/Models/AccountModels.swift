@@ -93,8 +93,8 @@ nonisolated enum AccountLinks {
     static let accountSettings = URL(string: "https://aseatawaits.com/account")!
 
     static let pricing = URL(string: "https://aseatawaits.com/pricing")!
-    static let privacyPolicy = URL(string: "https://aseatawaits.com/privacy")!
-    static let termsOfService = URL(string: "https://aseatawaits.com/terms")!
+    static let privacyPolicy = URL(string: "https://aseatawaits.com/privacy.pdf")!
+    static let termsOfService = URL(string: "https://aseatawaits.com/terms.pdf")!
     static let helpCenter = URL(string: "https://aseatawaits.com/help")!
     static let supportEmail = URL(string: "mailto:support@aseatawaits.com")!
 

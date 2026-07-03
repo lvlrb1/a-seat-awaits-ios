@@ -23,6 +23,7 @@ struct AddRoomView: View {
     @State private var color: String
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var confirmingDelete = false
 
     /// Soft washes that read as room tints (light enough for labels on top).
     private static let palette = ["#E5E7EB", "#EDE3F3", "#FCE7F3", "#FEF3C7",
@@ -54,6 +55,7 @@ struct AddRoomView: View {
                 sizeSection
                 colorSection
                 if let errorMessage { errorSection(errorMessage) }
+                if isEditing { deleteSection }
             }
             .navigationTitle(isEditing ? "Edit Room" : "Add Room")
             .navigationBarTitleDisplayMode(.inline)
@@ -65,6 +67,24 @@ struct AddRoomView: View {
                 }
             }
             .interactiveDismissDisabled(isSaving)
+            .confirmationDialog("Delete \(name)?", isPresented: $confirmingDelete,
+                                titleVisibility: .visible) {
+                Button("Delete room", role: .destructive) {
+                    if let editing { Task { await store.deleteRoom(editing); dismiss() } }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Tables stay put — only the room boundary is removed.")
+            }
+        }
+    }
+
+    private var deleteSection: some View {
+        Section {
+            Button(role: .destructive) { confirmingDelete = true } label: {
+                Label("Delete room", systemImage: "trash")
+            }
+            .disabled(isSaving)
         }
     }
 

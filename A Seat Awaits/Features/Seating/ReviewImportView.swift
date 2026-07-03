@@ -2,13 +2,14 @@
 //  ReviewImportView.swift
 //  A Seat Awaits
 //
-//  Step 2 of the on-device import flow. Shows the structured guests parsed from
-//  pasted text and lets the planner actually fix them before committing (F5):
-//  every row is tappable to edit the name, household and dietary note, and to
-//  resolve a "+1"/partner by naming the companion (which splits it into its own
-//  guest) or keeping it as a note. Likely duplicates of existing guests are
-//  flagged and default to "skip" so a re-import never silently doubles the list
-//  (F6). Confirmed rows are written via `store.addGuest(...)`.
+//  Step 2 of the import flow. Shows the guests the AI extracted (or, offline, the
+//  on-device parser) and lets the planner fix them before committing: every row
+//  is tappable to edit the name. Names the AI inferred (e.g. a child's last name)
+//  get an amber "Review" highlight — optional; every guest imports either way and
+//  saving an edit clears the flag. Likely duplicates of existing guests are flagged and default
+//  to "skip" so a re-import never silently doubles the list (F6). Household /
+//  dietary only surface when actually present. Rows are written via
+//  `store.addGuest(...)`.
 //
 
 import SwiftUI
@@ -24,6 +25,8 @@ struct ReviewImportView: View {
     @State private var editing: ReviewRow?
     @State private var isImporting = false
     @State private var importError: String?
+    @State private var didSucceed = false
+    @State private var importedCount = 0
 
     init(parsed: [ParsedGuest], store: SeatingStore, onFinish: @escaping () -> Void) {
         self.store = store
@@ -41,13 +44,14 @@ struct ReviewImportView: View {
 
     private var importingCount: Int { rows.filter { $0.action == .add }.count }
     private var duplicateCount: Int { rows.filter { $0.isDuplicate }.count }
+    private var confirmCount: Int { rows.filter { $0.guest.needsReview }.count }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             Brand.canvas.ignoresSafeArea()
 
             ScrollView {
-                VStack(spacing: 10) {
+                LazyVStack(spacing: 10) {
                     legend
                         .padding(.top, 12)
                         .padding(.bottom, 2)
@@ -61,7 +65,8 @@ struct ReviewImportView: View {
                             editing = row
                         } label: {
                             ParsedGuestRow(row: row,
-                                           onToggleDuplicate: { toggle($row) })
+                                           onToggleDuplicate: { toggle($row) },
+                                           onRemove: { removeRow(row) })
                         }
                         .buttonStyle(.plain)
                     }
@@ -93,9 +98,10 @@ struct ReviewImportView: View {
         .toolbarBackground(Brand.card, for: .navigationBar)
         .safeAreaInset(edge: .top) { summaryBanner }
         .sheet(item: $editing) { row in
-            EditParsedGuestSheet(row: row) { updated, companion in
-                applyEdit(updated, companion: companion)
-            }
+            EditParsedGuestSheet(
+                row: row,
+                onSave: { updated, companion in applyEdit(updated, companion: companion) },
+                onRemove: { removeRow(row) })
         }
         .alert("Import failed",
                isPresented: Binding(get: { importError != nil },
@@ -104,7 +110,14 @@ struct ReviewImportView: View {
         } message: {
             Text(importError ?? "")
         }
-        .interactiveDismissDisabled(isImporting)
+        .interactiveDismissDisabled(isImporting || didSucceed)
+        .overlay {
+            if didSucceed {
+                ImportSuccessOverlay(count: importedCount)
+                    .transition(.opacity)
+            }
+        }
+        .sensoryFeedback(.success, trigger: didSucceed)
     }
 
     // MARK: - Summary banner
@@ -136,22 +149,28 @@ struct ReviewImportView: View {
     private var summaryText: String {
         let parsed = rows.map(\.guest)
         let n = parsed.count
+        var parts = ["\(n) \(n == 1 ? "guest" : "guests")"]
+        // Household / dietary only appear when actually present (the AI import is
+        // names-only; the offline fallback parser may still fill them).
         let h = parsed.householdCount
         let d = parsed.dietaryCount
-        return "\(n) \(n == 1 ? "guest" : "guests") parsed · \(h) \(h == 1 ? "household" : "households") · \(d) dietary \(d == 1 ? "note" : "notes")"
+        if h > 0 { parts.append("\(h) \(h == 1 ? "household" : "households")") }
+        if d > 0 { parts.append("\(d) dietary \(d == 1 ? "note" : "notes")") }
+        if confirmCount > 0 { parts.append("\(confirmCount) to review") }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: - Legend
 
     private var legend: some View {
         HStack(spacing: 8) {
-            TagPill.neutral("Name")
-            TagPill.household("Household")
-            TagPill.dietary("Dietary")
-            Spacer(minLength: 0)
-            Text("Tap a row to edit")
-                .font(.system(size: 12, weight: .semibold))
+            Text(confirmCount > 0
+                 ? "Highlighted rows are worth a quick review — every guest imports either way."
+                 : "Tap a row to edit.")
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Brand.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
     }
 
@@ -203,17 +222,25 @@ struct ReviewImportView: View {
         row.wrappedValue.action = row.wrappedValue.action == .add ? .skip : .add
     }
 
+    /// Drops a guest from the import entirely.
+    private func removeRow(_ row: ReviewRow) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            rows.removeAll { $0.id == row.id }
+        }
+    }
+
     /// Applies an inline edit. When the planner names a "+1" companion, it's split
     /// off into its own guest row sharing the household; the original row's
     /// unresolved hint is cleared.
     private func applyEdit(_ updated: ParsedGuest, companion: String?) {
         guard let index = rows.firstIndex(where: { $0.id == updated.id }) else { return }
         var edited = updated
+        // Tapping a row and saving is the confirmation — clear the amber flag.
+        edited.needsReview = false
         let companionName = companion?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let companionName, !companionName.isEmpty {
             edited.plusOneHint = nil
-            edited.needsReview = false
             let new = ParsedGuest(name: GuestImportParser.titleCasedName(companionName),
                                   group: edited.group,
                                   dietary: nil,
@@ -234,8 +261,8 @@ struct ReviewImportView: View {
     private func importAll() async {
         isImporting = true
         importError = nil
-        defer { isImporting = false }
         do {
+            var count = 0
             for row in rows where row.action == .add {
                 let guest = row.guest
                 try await store.addGuest(
@@ -245,9 +272,18 @@ struct ReviewImportView: View {
                     notes: guest.plusOneHint,
                     dietary: guest.dietary
                 )
+                count += 1
             }
+            importedCount = count
+            // Celebrate, then dismiss once the animation has had a beat to play.
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isImporting = false
+                didSucceed = true
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
             onFinish()
         } catch {
+            isImporting = false
             importError = FriendlyError.message(for: error)
         }
     }
@@ -271,6 +307,7 @@ struct ReviewRow: Identifiable {
 private struct ParsedGuestRow: View {
     let row: ReviewRow
     var onToggleDuplicate: () -> Void
+    var onRemove: () -> Void
 
     private var guest: ParsedGuest { row.guest }
     private var willImport: Bool { row.action == .add }
@@ -328,7 +365,17 @@ private struct ParsedGuestRow: View {
                 .buttonStyle(.plain)
             }
 
-            // The chevron now honors a real action — every row is editable (F5).
+            // Always-visible remove control — drops the guest from the import.
+            Button(action: onRemove) {
+                Image(systemName: "minus.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(Brand.danger.opacity(0.8))
+                    .symbolRenderingMode(.hierarchical)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove \(guest.name)")
+
+            // The chevron signals the row is tappable to edit (F5).
             Image(systemName: "chevron.right")
                 .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(Brand.slate400)
@@ -364,10 +411,10 @@ private struct ParsedGuestRow: View {
     }
 
     private var confirmText: String {
-        guard let hint = guest.plusOneHint?.lowercased() else { return "Confirm…" }
-        if hint.contains("partner") { return "Confirm partner name" }
-        if hint.contains("guest") { return "Confirm guest name" }
-        return "Confirm +1 name"
+        guard let hint = guest.plusOneHint?.lowercased() else { return "Review" }
+        if hint.contains("partner") { return "Review partner name" }
+        if hint.contains("guest") { return "Review guest name" }
+        return "Review +1 name"
     }
 }
 

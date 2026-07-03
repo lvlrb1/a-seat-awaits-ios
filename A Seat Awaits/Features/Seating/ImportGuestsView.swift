@@ -2,10 +2,12 @@
 //  ImportGuestsView.swift
 //  A Seat Awaits
 //
-//  Sheet entry point for bulk guest import. The backend AI import endpoint is
-//  web-only, so this runs a fully on-device heuristic parser
-//  (`GuestImportParser`) over pasted text or an imported CSV / plain-text file,
-//  then pushes `ReviewImportView` for confirmation.
+//  Sheet entry point for bulk guest import. "Structure list" sends a pasted/CSV
+//  list — or an uploaded Excel (.xlsx/.xls) file — to the `ai-import-guests`
+//  Supabase Edge Function, which extracts every guest (adults, partners and
+//  children, parity with the web app), then pushes `ReviewImportView`. For
+//  text/CSV, if the AI call fails (offline, plan-gated, or AI error) it falls
+//  back to the on-device `GuestImportParser`; Excel has no offline fallback.
 //
 
 import SwiftUI
@@ -15,18 +17,40 @@ struct ImportGuestsView: View {
     @Bindable var store: SeatingStore
     @Environment(\.dismiss) private var dismiss
 
+    /// A binary spreadsheet the user picked (Excel). Text/CSV files load into the
+    /// paste editor instead; only true spreadsheets are held as an attachment.
+    private struct PickedFile: Equatable {
+        let data: Data
+        let name: String
+    }
+
     @State private var pasteText = ""
+    @State private var pickedFile: PickedFile?
     @State private var parsed: [ParsedGuest] = []
     @State private var showReview = false
     @State private var showFileImporter = false
     @State private var importError: String?
+    @State private var isStructuring = false
     @FocusState private var editorFocused: Bool
 
+    /// File types the picker accepts: Excel + CSV/text.
+    private static var allowedTypes: [UTType] {
+        var types: [UTType] = [.commaSeparatedText, .plainText, .text, .utf8PlainText, .spreadsheet]
+        if let xlsx = UTType(filenameExtension: "xlsx") { types.append(xlsx) }
+        if let xls = UTType(filenameExtension: "xls") { types.append(xls) }
+        return types
+    }
+
+    /// Whether there's anything to structure (a file or some pasted text).
+    private var hasInput: Bool {
+        pickedFile != nil || !pasteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private let placeholder = """
-    Adams, Layla & +1 — veg
-    chris anderson (eng) table?
-    Brown, Jackson - GF, w/ partner
-    Olivia Brown — marketing
+    Jordan Avery
+    Sam & Riley Brooks
+    Patel, Anjali
+    Olivia Brown
     """
 
     var body: some View {
@@ -41,6 +65,11 @@ struct ImportGuestsView: View {
 
                         dropZone
                             .padding(.top, 18)
+
+                        if let file = pickedFile {
+                            selectedFileChip(file)
+                                .padding(.top, 12)
+                        }
 
                         orDivider
                             .padding(.top, 20)
@@ -70,17 +99,23 @@ struct ImportGuestsView: View {
             }
             .fileImporter(
                 isPresented: $showFileImporter,
-                allowedContentTypes: [.commaSeparatedText, .plainText, .text, .utf8PlainText],
+                allowedContentTypes: Self.allowedTypes,
                 allowsMultipleSelection: false
             ) { result in
                 handleFileImport(result)
             }
-            .alert("Couldn't read file",
+            .alert("Couldn't import",
                    isPresented: Binding(get: { importError != nil },
                                         set: { if !$0 { importError = nil } })) {
                 Button("OK", role: .cancel) { importError = nil }
             } message: {
                 Text(importError ?? "")
+            }
+        }
+        .overlay {
+            if isStructuring {
+                StructuringOverlay()
+                    .transition(.opacity)
             }
         }
     }
@@ -92,7 +127,7 @@ struct ImportGuestsView: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(Brand.purple)
-            Text("We'll structure your list — names, households and dietary notes — then you review before importing.")
+            Text("We'll structure your guests — adults, partners and children — then you review before importing.")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Brand.accent)
                 .fixedSize(horizontal: false, vertical: true)
@@ -126,12 +161,12 @@ struct ImportGuestsView: View {
                 .foregroundStyle(Brand.textPrimary)
                 .padding(.top, 14)
 
-            Text("CSV or text file · tap to browse")
+            Text("Excel, CSV or text file · tap to browse")
                 .font(.system(size: 14))
                 .foregroundStyle(Brand.textSecondary)
                 .padding(.top, 4)
 
-            Text("Exporting from a spreadsheet? Save it as CSV first.")
+            Text("Supports .xlsx, .xls, .csv and plain text.")
                 .font(.system(size: 12))
                 .foregroundStyle(Brand.textTertiary)
                 .multilineTextAlignment(.center)
@@ -156,12 +191,49 @@ struct ImportGuestsView: View {
         )
     }
 
+    // MARK: - Selected spreadsheet chip
+
+    private func selectedFileChip(_ file: PickedFile) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Brand.purple)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(file.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Brand.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("Ready to structure")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textSecondary)
+            }
+            Spacer(minLength: 0)
+            Button {
+                pickedFile = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Brand.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove file")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Brand.fieldFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Brand.fieldBorder, lineWidth: 1)
+        )
+    }
+
     // MARK: - "or paste your list" divider
 
     private var orDivider: some View {
         HStack(spacing: 14) {
             Rectangle().fill(Brand.separator).frame(height: 1)
-            Text("or paste your list")
+            Text("or type names, one per line")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Brand.textTertiary)
                 .fixedSize()
@@ -205,14 +277,20 @@ struct ImportGuestsView: View {
     private var importButton: some View {
         Button(action: runImport) {
             HStack(spacing: 9) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 18, weight: .bold))
-                Text("Structure list")
+                if isStructuring {
+                    ProgressView()
+                        .tint(.white)
+                    Text("Structuring…")
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 18, weight: .bold))
+                    Text("Structure list")
+                }
             }
         }
         .buttonStyle(.primaryBrand)
-        .disabled(pasteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .opacity(pasteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
+        .disabled(!hasInput || isStructuring)
+        .opacity(!hasInput || isStructuring ? 0.5 : 1)
         .padding(.horizontal, 20)
         .padding(.top, 12)
         .padding(.bottom, 16)
@@ -224,10 +302,59 @@ struct ImportGuestsView: View {
 
     private func runImport() {
         editorFocused = false
-        let results = GuestImportParser.parse(pasteText)
-        guard !results.isEmpty else { return }
-        parsed = results
-        showReview = true
+        guard hasInput, !isStructuring else { return }
+
+        // A picked spreadsheet wins over pasted text.
+        let input: GuestImportInput
+        if let file = pickedFile {
+            input = .file(data: file.data, name: file.name)
+        } else {
+            input = .text(pasteText)
+        }
+
+        withAnimation(.easeInOut(duration: 0.3)) { isStructuring = true }
+        Task {
+            let started = Date()
+            let outcome = await structuredGuests(for: input)
+            // Hold the animation briefly so it never just flashes on fast results.
+            let elapsed = Date().timeIntervalSince(started)
+            if elapsed < 0.9 {
+                try? await Task.sleep(nanoseconds: UInt64((0.9 - elapsed) * 1_000_000_000))
+            }
+            withAnimation(.easeInOut(duration: 0.3)) { isStructuring = false }
+            switch outcome {
+            case .success(let results) where !results.isEmpty:
+                parsed = results
+                showReview = true
+            case .success:
+                importError = "We couldn't find any names in that list. Check the format and try again."
+            case .failure(let message):
+                importError = message
+            }
+        }
+    }
+
+    /// Either parsed guests or a friendly message to surface. (A plain enum rather
+    /// than `Result`, whose failure type must conform to `Error` — `String` doesn't.)
+    private enum StructuringOutcome {
+        case success([ParsedGuest])
+        case failure(String)
+    }
+
+    /// Structures the input with the AI Edge Function. For text/CSV it falls back
+    /// to the on-device parser on any failure; Excel is binary so it has no
+    /// offline fallback — a failure there surfaces a friendly message.
+    private func structuredGuests(for input: GuestImportInput) async -> StructuringOutcome {
+        do {
+            return .success(try await store.aiStructureGuests(input))
+        } catch {
+            switch input {
+            case .text(let text):
+                return .success(GuestImportParser.parse(text))
+            case .file:
+                return .failure(FriendlyError.message(for: error))
+            }
+        }
     }
 
     private func handleFileImport(_ result: Result<[URL], Error>) {
@@ -238,12 +365,20 @@ struct ImportGuestsView: View {
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             do {
                 let data = try Data(contentsOf: url)
-                let text = String(decoding: data, as: UTF8.self)
-                // Append into the paste buffer so the user can review/edit.
-                if pasteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    pasteText = text
+                let ext = url.pathExtension.lowercased()
+                if ext == "xlsx" || ext == "xls" {
+                    // Binary spreadsheet — hold it as an attachment; it's parsed
+                    // server-side. Clearing pasteText keeps the input unambiguous.
+                    pickedFile = PickedFile(data: data, name: url.lastPathComponent)
                 } else {
-                    pasteText += "\n" + text
+                    // Text / CSV — load into the paste editor so it stays editable.
+                    let text = String(decoding: data, as: UTF8.self)
+                    pickedFile = nil
+                    if pasteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        pasteText = text
+                    } else {
+                        pasteText += "\n" + text
+                    }
                 }
             } catch {
                 importError = FriendlyError.message(for: error)

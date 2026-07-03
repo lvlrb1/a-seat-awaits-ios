@@ -322,6 +322,9 @@ actor SupabaseClient {
                                                   accessToken: String?) async throws -> Data {
         var request = URLRequest(url: baseURL.appendingPathComponent("functions/v1/\(name)"))
         request.httpMethod = "POST"
+        // AI-backed functions (e.g. guest import) can run for tens of seconds, well
+        // past URLSession's 60s default — without this they fail as `.offline`.
+        request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(anonKey, forHTTPHeaderField: "apikey")

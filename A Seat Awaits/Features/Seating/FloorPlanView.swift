@@ -25,19 +25,45 @@ struct FloorPlanView: View {
     /// The item currently being dragged (table, shape, or room) with its live,
     /// snap-resolved position and any alignment guides / collision state.
     @State private var activeDrag: ActiveDrag?
+    /// The canvas item (table/shape/room) the user has tapped to select. Only the
+    /// selected item can be dragged — everything else lets the canvas pan — so a
+    /// move is always deliberate, never a side effect of scrolling to look around.
+    @State private var selectedItemID: String?
+    /// Bumped each time a drag newly engages an alignment guide, to fire a light
+    /// "snap" haptic. Paired with `lastGuideSig` to detect the transition.
+    @State private var snapTick = 0
+    @State private var lastGuideSig = ""
+    /// The item being rotated by a live two-finger twist, with its in-flight
+    /// angle and the 15° detent it's locked to (nil while between detents).
+    @State private var activeRotation: ActiveRotation?
+    /// Bumped each time the twist locks onto a new 15° detent, for a click haptic.
+    @State private var rotateSnapTick = 0
+
+    private struct ActiveRotation: Equatable {
+        let id: String
+        var degrees: Double
+        var detent: Double?
+    }
     @State private var selectedTable: SeatingTable?
-    @State private var editingTable: SeatingTable?
-    @State private var pendingDelete: SeatingTable?
     @State private var showingAddTable = false
-    @State private var toast: String?
+    @State private var toast: AssignToast?
     @State private var pulse = false
+    /// Bumped when an assign-mode tap lands on a full table, to fire an error haptic.
+    @State private var errorTick = 0
+    /// Arms the delete confirmation for whatever canvas item is selected.
+    @State private var confirmingDelete = false
+
+    /// Feedback pinned above the tab bar while assigning: green confirmation
+    /// when a guest lands, amber warning when the tapped table has no room.
+    private struct AssignToast: Equatable {
+        let text: String
+        let isSuccess: Bool
+    }
 
     // Decorative shapes + rooms (Tier 3).
     @State private var editingShape: DecorShape?
-    @State private var pendingDeleteShape: DecorShape?
     @State private var showingAddShape = false
     @State private var editingRoom: FloorPlanRoom?
-    @State private var pendingDeleteRoom: FloorPlanRoom?
     @State private var showingAddRoom = false
     @State private var showingTemplates = false
     /// Opt-in snap to the 2ft grid; gentle alignment guides are always on.
@@ -58,6 +84,18 @@ struct FloorPlanView: View {
     /// `scrollTo(id:)` reads the unscaled child position and lands wrong once the
     /// canvas is scaled (and enlarged by a room).
     @State private var scrollPosition = ScrollPosition()
+    /// Live content offset of the canvas, tracked so pinch-zoom can keep the point
+    /// under the fingers anchored (focal-point zoom, the way Figma/Freeform feel).
+    @State private var scrollOffset: CGPoint = .zero
+    /// References captured when a pinch begins: the focal point (in scaled-content
+    /// coordinates), the zoom, and the offset — the anchors focal zoom maths against.
+    @State private var pinchStart: PinchStart?
+
+    private struct PinchStart {
+        let anchor: CGPoint
+        let zoom: CGFloat
+        let offset: CGPoint
+    }
 
     enum TablesMode { case canvas, list }
 
@@ -76,7 +114,7 @@ struct FloorPlanView: View {
     }
 
     private let canvasSize = CGSize(width: 1000, height: 1400)
-    private let minZoom: CGFloat = 0.4
+    private let minZoom: CGFloat = 0.2
     private let maxZoom: CGFloat = 2.5
 
     /// EventDetailView's existing call site stays valid via these defaults.
@@ -122,9 +160,6 @@ struct FloorPlanView: View {
         .sheet(item: $selectedTable) { table in
             TableDetailSheet(store: store, table: table)
         }
-        .sheet(item: $editingTable) { table in
-            AddTableView(store: store, editing: table)
-        }
         .sheet(isPresented: $showingAddTable) { AddTableView(store: store) }
         .sheet(item: $editingShape) { shape in
             AddShapeView(store: store, editing: shape)
@@ -135,41 +170,20 @@ struct FloorPlanView: View {
         }
         .sheet(isPresented: $showingAddRoom) { AddRoomView(store: store) }
         .sheet(isPresented: $showingTemplates) { TemplatesView(store: store) }
-        .confirmationDialog("Delete \(pendingDelete?.name ?? "table")?",
-                            isPresented: Binding(get: { pendingDelete != nil },
-                                                 set: { if !$0 { pendingDelete = nil } }),
+        .confirmationDialog(deleteDialogTitle,
+                            isPresented: $confirmingDelete,
                             titleVisibility: .visible) {
-            Button("Delete table", role: .destructive) {
-                if let table = pendingDelete { Task { await store.deleteTable(table) } }
-                pendingDelete = nil
-            }
-            Button("Cancel", role: .cancel) { pendingDelete = nil }
+            Button("Delete", role: .destructive) { performDelete() }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Guests at this table will become unassigned.")
+            Text(deleteDialogMessage)
         }
-        .confirmationDialog("Delete \(pendingDeleteShape?.name ?? "shape")?",
-                            isPresented: Binding(get: { pendingDeleteShape != nil },
-                                                 set: { if !$0 { pendingDeleteShape = nil } }),
-                            titleVisibility: .visible) {
-            Button("Delete shape", role: .destructive) {
-                if let shape = pendingDeleteShape { Task { await store.deleteShape(shape) } }
-                pendingDeleteShape = nil
-            }
-            Button("Cancel", role: .cancel) { pendingDeleteShape = nil }
-        }
-        .confirmationDialog("Delete \(pendingDeleteRoom?.name ?? "room")?",
-                            isPresented: Binding(get: { pendingDeleteRoom != nil },
-                                                 set: { if !$0 { pendingDeleteRoom = nil } }),
-                            titleVisibility: .visible) {
-            Button("Delete room", role: .destructive) {
-                if let room = pendingDeleteRoom { Task { await store.deleteRoom(room) } }
-                pendingDeleteRoom = nil
-            }
-            Button("Cancel", role: .cancel) { pendingDeleteRoom = nil }
-        } message: {
-            Text("Tables stay put — only the room boundary is removed.")
-        }
+        .sensoryFeedback(.error, trigger: errorTick)
         .onAppear { pulse = true }
+        // Selection only makes sense on an editable canvas — clear it when the
+        // context changes out from under it.
+        .onChange(of: isAssigning) { _, _ in selectedItemID = nil }
+        .onChange(of: mode) { _, _ in selectedItemID = nil }
     }
 
     private var canvasBackground: Color {
@@ -182,7 +196,27 @@ struct FloorPlanView: View {
         ContentUnavailableView {
             Label("No tables yet", systemImage: "square.on.square.dashed")
         } description: {
-            Text("Add tables with the button below, then drag them into your floor plan.")
+            Text(canEdit
+                 ? "Add a table to start laying out your floor plan, then drag everything into place."
+                 : "Tables will appear here once the planner adds them.")
+        } actions: {
+            if canEdit {
+                Button { showingAddTable = true } label: {
+                    Label("Add a Table", systemImage: "plus")
+                        .font(.system(size: 15, weight: .bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Brand.primaryFill)
+
+                Button { showingTemplates = true } label: {
+                    Text("Start from a template")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Brand.accent)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .frame(maxHeight: .infinity)
     }
@@ -309,23 +343,34 @@ struct FloorPlanView: View {
             ZStack(alignment: .topLeading) {
                 DotGrid(dotColor: scheme == .dark ? Brand.hairlineDark : Color.hex("#D6D3CC"))
                     .frame(width: content.width, height: content.height)
+                    .contentShape(Rectangle())
+                    // Double-tap steps the zoom in (then back out to fit);
+                    // a single tap on empty canvas dismisses the selection.
+                    .onTapGesture(count: 2) { location in handleDoubleTapZoom(at: location) }
+                    .onTapGesture { if selectedItemID != nil { deselect() } }
 
                 // Back-to-front: rooms, then decorative shapes, then tables.
                 ForEach(store.rooms) { room in roomLayer(room) }
                 ForEach(store.shapes) { shape in shapeLayer(shape) }
                 ForEach(store.tables) { table in
                     tableNode(table)
+                        .floorPlanSelected(selectedItemID == table.id,
+                                           dragging: activeDrag?.id == table.id)
                         .position(tableCenter(table))
                         .id(table.id)
-                        .gesture((isAssigning || !canEdit) ? nil : dragGesture(forTable: table))
-                        .onTapGesture { handleTap(table) }
-                        .contextMenu { if !isAssigning { tableContextMenu(table) } }
+                        .onTapGesture { handleTableTap(table) }
+                        .gesture(canMove(table.id) ? dragGesture(forTable: table) : nil)
+                        .simultaneousGesture(canTwist(table) ? twistGesture(forTable: table) : nil)
                 }
+
+                // Rotate handle for the selected item (web-canvas parity).
+                rotationHandleOverlay
 
                 // Alignment guides on top of everything, in canvas space.
                 guideOverlay
             }
             .frame(width: content.width, height: content.height, alignment: .topLeading)
+            .coordinateSpace(name: Self.canvasSpace)
             .scaleEffect(effectiveZoom, anchor: .topLeading)
             .frame(width: content.width * effectiveZoom,
                    height: content.height * effectiveZoom,
@@ -333,6 +378,27 @@ struct FloorPlanView: View {
             .gesture(magnifyGesture)
         }
         .scrollPosition($scrollPosition)
+        // Mirror the live content offset so focal-point pinch zoom can anchor on it.
+        .onScrollGeometryChange(for: CGPoint.self) { $0.contentOffset } action: { _, new in
+            scrollOffset = new
+        }
+        // While a drag or twist is in flight, freeze the canvas so the move never
+        // fights the pan — you're either scrolling or repositioning, never both.
+        .scrollDisabled(activeDrag != nil || activeRotation != nil)
+        // Light tap when a tap lands on a table to select it.
+        .sensoryFeedback(trigger: selectedItemID) { _, new in
+            new != nil ? .selection : nil
+        }
+        // A firmer tap when a move begins (pickup) and a crisp one when it lands.
+        .sensoryFeedback(trigger: activeDrag?.id) { old, new in
+            if old == nil && new != nil { return .impact(weight: .medium) }
+            if old != nil && new == nil { return .impact(flexibility: .solid, intensity: 0.7) }
+            return nil
+        }
+        // A subtle click each time the dragged item snaps onto an alignment guide.
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: snapTick)
+        // …and each time a two-finger twist locks onto a 15° detent.
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: rotateSnapTick)
     }
 
     /// The scrollable canvas rectangle in absolute coordinates. It grows to
@@ -352,10 +418,24 @@ struct FloorPlanView: View {
         for s in store.shapes { include(s.positionX ?? 120, s.positionY ?? 120, s.width, s.height) }
         for r in store.rooms { include(r.positionX, r.positionY, r.widthPoints, r.heightPoints) }
 
-        guard minX <= maxX else { return CGRect(origin: .zero, size: canvasSize) }
+        // The canvas must stay larger than the viewport even fully zoomed out, or
+        // the dotted floor shrinks to a small patch and the rest reads as "cut
+        // off." `viewport / minZoom` is the content size that exactly fills the
+        // screen at the most-zoomed-out level; we keep at least that, plus a margin.
+        let z = max(minZoom, 0.01)
+        let fillW = viewportSize.width / z * 1.3
+        let fillH = viewportSize.height / z * 1.3
+
+        guard minX <= maxX else {
+            let w = max(canvasSize.width, fillW), h = max(canvasSize.height, fillH)
+            return CGRect(origin: .zero, size: CGSize(width: w, height: h))
+        }
+        // Origin stays anchored to the items' top-left (with a margin) so it only
+        // shifts when the spread itself changes — moving a table never makes the
+        // whole canvas jump. The box just grows down/right to fill the screen.
         let originX = minX - pad, originY = minY - pad
-        let width = max(canvasSize.width, (maxX - minX) + pad * 2)
-        let height = max(canvasSize.height, (maxY - minY) + pad * 2)
+        let width = max(canvasSize.width, (maxX - minX) + pad * 2, fillW)
+        let height = max(canvasSize.height, (maxY - minY) + pad * 2, fillH)
         return CGRect(x: originX, y: originY, width: width, height: height)
     }
 
@@ -366,29 +446,35 @@ struct FloorPlanView: View {
         let size = CGSize(width: room.widthPoints, height: room.heightPoints)
         // The room fill is non-interactive (canvas pans over it); only the name
         // chip is hittable, so the gestures below effectively bind to the chip.
-        RoomNodeView(room: room)
+        RoomNodeView(room: room, isSelected: selectedItemID == room.id)
             .frame(width: size.width, height: size.height)
+            .floorPlanSelected(selectedItemID == room.id, dragging: activeDrag?.id == room.id)
             .position(center(id: room.id,
                              baseX: room.positionX, baseY: room.positionY,
                              width: size.width, height: size.height))
             .id(room.id)
-            .gesture((isAssigning || !canEdit) ? nil : dragGesture(forRoom: room))
-            .onTapGesture { if !isAssigning && canEdit { editingRoom = room } }
-            .contextMenu { if !isAssigning && canEdit { roomContextMenu(room) } }
+            .onTapGesture { handleRoomTap(room) }
+            .gesture(canMove(room.id) ? dragGesture(forRoom: room) : nil)
     }
 
-    @ViewBuilder
     private func shapeLayer(_ shape: DecorShape) -> some View {
         let side = max(shape.width, shape.height) + 36
-        ShapeNodeView(shape: shape, isColliding: activeDrag?.id == shape.id && activeDrag?.colliding == true)
+        let liveTwist = activeRotation?.id == shape.id
+        var display = shape
+        if liveTwist, let degrees = activeRotation?.degrees { display.rotation = degrees }
+        return ShapeNodeView(shape: display,
+                             isColliding: activeDrag?.id == shape.id && activeDrag?.colliding == true,
+                             isSelected: selectedItemID == shape.id,
+                             liveRotating: liveTwist)
             .frame(width: side, height: side)
+            .floorPlanSelected(selectedItemID == shape.id, dragging: activeDrag?.id == shape.id)
             .position(center(id: shape.id,
                              baseX: shape.positionX ?? 120, baseY: shape.positionY ?? 120,
                              width: shape.width, height: shape.height))
             .id(shape.id)
-            .gesture((isAssigning || !canEdit) ? nil : dragGesture(forShape: shape))
-            .onTapGesture { if !isAssigning && canEdit { editingShape = shape } }
-            .contextMenu { if !isAssigning && canEdit { shapeContextMenu(shape) } }
+            .onTapGesture { handleShapeTap(shape) }
+            .gesture(canMove(shape.id) ? dragGesture(forShape: shape) : nil)
+            .simultaneousGesture(canTwist(shape) ? twistGesture(forShape: shape) : nil)
     }
 
     /// Pink dashed guide lines for whatever the active drag is snapping to,
@@ -418,11 +504,23 @@ struct FloorPlanView: View {
         }
     }
 
-    /// Committed zoom combined with the live pinch factor, clamped to range.
-    private var effectiveZoom: CGFloat { clampZoom(zoom * gestureZoom) }
+    /// Committed zoom combined with the live pinch factor. Deliberately NOT
+    /// hard-clamped: a live pinch may rubber-band past the limits (see
+    /// `rubberBandZoom`); every committed setter clamps before storing.
+    private var effectiveZoom: CGFloat { zoom * gestureZoom }
 
     private func clampZoom(_ value: CGFloat) -> CGFloat {
         min(maxZoom, max(minZoom, value))
+    }
+
+    /// Soft-clamps a raw pinch zoom: inside the range it passes straight
+    /// through; past a limit the overshoot is damped hard, so the canvas
+    /// stretches a little and resists like a rubber band instead of stopping
+    /// dead. The gesture's end animates back to the clamped level.
+    private func rubberBandZoom(_ raw: CGFloat) -> CGFloat {
+        if raw > maxZoom { return maxZoom * pow(raw / maxZoom, 0.35) }
+        if raw < minZoom { return minZoom * pow(raw / minZoom, 0.35) }
+        return raw
     }
 
     private func setZoom(_ value: CGFloat) {
@@ -432,13 +530,103 @@ struct FloorPlanView: View {
         }
     }
 
+    /// The scroll offset that keeps the canvas point under `focal` (a point in the
+    /// scaled-content space) fixed as the zoom goes `from` → `to`. Both offset and
+    /// focal share the content's top-left origin, so the algebra is just:
+    /// O₁ = O₀ + focal · (to/from − 1).
+    private func anchoredOffset(focal: CGPoint, from z0: CGFloat, to z1: CGFloat,
+                                offset: CGPoint) -> CGPoint {
+        let ratio = z1 / z0
+        return CGPoint(x: offset.x + focal.x * (ratio - 1),
+                       y: offset.y + focal.y * (ratio - 1))
+    }
+
+    /// Zoom to an absolute level while keeping the viewport's center fixed — so the
+    /// +/−/reset buttons zoom into the middle of what you're looking at, not a corner.
+    private func zoomCentered(to value: CGFloat) {
+        let z1 = clampZoom(value)
+        guard viewportSize.width > 0, z1 != zoom else { setZoom(value); return }
+        let focal = CGPoint(x: scrollOffset.x + viewportSize.width / 2,
+                            y: scrollOffset.y + viewportSize.height / 2)
+        let target = anchoredOffset(focal: focal, from: zoom, to: z1, offset: scrollOffset)
+        withAnimation(.snappy(duration: 0.2)) { zoom = z1; gestureZoom = 1 }
+        // Apply the offset after the zoom resizes the content, so it lands in the
+        // final coordinate space.
+        DispatchQueue.main.async {
+            withAnimation(.snappy(duration: 0.2)) { scrollPosition.scrollTo(point: target) }
+        }
+    }
+
+    /// Two-finger pinch with focal-point anchoring: the spot under your fingers
+    /// stays put as the canvas scales, the way Figma/Freeform/Keynote feel. We pin
+    /// the focal point captured at the pinch's start and move the scroll offset to
+    /// compensate each frame, instead of letting the canvas grow from a corner.
     private var magnifyGesture: some Gesture {
-        MagnificationGesture()
-            .onChanged { gestureZoom = $0 }
-            .onEnded { value in
-                zoom = clampZoom(zoom * value)
-                gestureZoom = 1
+        MagnifyGesture()
+            .onChanged { value in
+                let start = pinchStart ?? {
+                    let s = PinchStart(anchor: value.startLocation, zoom: zoom, offset: scrollOffset)
+                    pinchStart = s
+                    return s
+                }()
+                let z1 = rubberBandZoom(start.zoom * value.magnification)
+                gestureZoom = z1 / start.zoom   // effectiveZoom == z1
+                let target = anchoredOffset(focal: start.anchor, from: start.zoom,
+                                            to: z1, offset: start.offset)
+                scrollPosition.scrollTo(point: target)
             }
+            .onEnded { value in
+                defer { pinchStart = nil }
+                guard let start = pinchStart else { gestureZoom = 1; return }
+                let raw = start.zoom * value.magnification
+                let settled = clampZoom(raw)
+                if rubberBandZoom(raw) == settled {
+                    // Ended inside the range — commit with no visual change.
+                    zoom = settled
+                    gestureZoom = 1
+                } else {
+                    // Ended stretched past a limit — spring back to the clamped
+                    // level, keeping the pinch's focal point anchored.
+                    withAnimation(.spring(duration: 0.3)) {
+                        zoom = settled
+                        gestureZoom = 1
+                    }
+                    let target = anchoredOffset(focal: start.anchor, from: start.zoom,
+                                                to: settled, offset: start.offset)
+                    DispatchQueue.main.async {
+                        withAnimation(.spring(duration: 0.3)) {
+                            scrollPosition.scrollTo(point: target)
+                        }
+                    }
+                }
+            }
+    }
+
+    /// Double-tap zoom, anchored on the tapped canvas point: it steps up
+    /// through comfortable working levels (100% → 200%) and, once fully zoomed
+    /// in, drops back out to frame the whole layout — the Maps/Photos rhythm.
+    private func handleDoubleTapZoom(at canvasPoint: CGPoint) {
+        if zoom >= 2 * 0.98 {
+            fitToLayout()
+        } else if zoom >= 1 * 0.98 {
+            zoomAnchored(to: 2, canvasPoint: canvasPoint)
+        } else {
+            zoomAnchored(to: 1, canvasPoint: canvasPoint)
+        }
+    }
+
+    /// Zoom to an absolute level while keeping the given *unscaled* canvas
+    /// point fixed on screen — the tap target stays put as the canvas grows.
+    private func zoomAnchored(to value: CGFloat, canvasPoint: CGPoint) {
+        let z1 = clampZoom(value)
+        guard viewportSize.width > 0, z1 != zoom else { return }
+        // Into scaled-content space, where `anchoredOffset` does its algebra.
+        let focal = CGPoint(x: canvasPoint.x * zoom, y: canvasPoint.y * zoom)
+        let target = anchoredOffset(focal: focal, from: zoom, to: z1, offset: scrollOffset)
+        withAnimation(.snappy(duration: 0.25)) { zoom = z1; gestureZoom = 1 }
+        DispatchQueue.main.async {
+            withAnimation(.snappy(duration: 0.25)) { scrollPosition.scrollTo(point: target) }
+        }
     }
 
     /// Zooms and scrolls so the spread of tables fills the viewport, centering on
@@ -497,15 +685,20 @@ struct FloorPlanView: View {
         let occupancy = store.occupancy(of: table)
         let capacity = table.capacity ?? 0
         let open = SeatingLogic.remainingSeats(table, guests: store.guests) ?? capacity
+        // Follow the live twist angle while this table is being rotated.
+        let liveTwist = activeRotation?.id == table.id
+        var display = table
+        if liveTwist, let degrees = activeRotation?.degrees { display.rotation = degrees }
         return TableNodeView(
-            table: table,
+            table: display,
             occupancy: occupancy,
             isOverCapacity: SeatingLogic.isOverCapacity(table, guests: store.guests),
-            isSelected: selectedTable?.id == table.id,
+            isSelected: selectedItemID == table.id,
             assigning: isAssigning,
             openSeats: open,
             pulse: pulse,
-            isColliding: activeDrag?.id == table.id && activeDrag?.colliding == true
+            isColliding: activeDrag?.id == table.id && activeDrag?.colliding == true,
+            liveRotating: liveTwist
         )
     }
 
@@ -682,18 +875,24 @@ struct FloorPlanView: View {
             .transition(.move(edge: .top))
         }
 
-        // Floating "Add Table" + zoom controls — hidden in assign mode. The zoom
-        // cluster only applies to the canvas, not the list.
+        // Bottom controls — hidden in assign mode. A selected canvas item swaps the
+        // zoom/add cluster for its contextual toolbar so the focus stays on it.
         if !isAssigning {
             VStack {
                 Spacer()
-                HStack(alignment: .bottom) {
-                    if effectiveMode == .canvas { zoomControl }
-                    Spacer()
-                    if canEdit { addMenu }
+                if effectiveMode == .canvas, canEdit, let item = selectedCanvasItem {
+                    selectionToolbar(item)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    HStack(alignment: .bottom) {
+                        if effectiveMode == .canvas { zoomControl }
+                        Spacer()
+                        if canEdit { addMenu }
+                    }
                 }
             }
             .padding(18)
+            .animation(.snappy(duration: 0.2), value: selectedItemID)
         }
 
         // Conflict-helper toast pinned bottom (assign mode).
@@ -731,6 +930,193 @@ struct FloorPlanView: View {
         .accessibilityLabel("Add table, shape, or room")
     }
 
+    // MARK: - Selection toolbar
+
+    /// The kind of item currently selected on the canvas, resolved fresh from the
+    /// store so its name/occupancy stay live while the toolbar is up.
+    private enum SelectedItem {
+        case table(SeatingTable), shape(DecorShape), room(FloorPlanRoom)
+    }
+
+    private var selectedCanvasItem: SelectedItem? {
+        guard let id = selectedItemID else { return nil }
+        if let t = store.tables.first(where: { $0.id == id }) { return .table(t) }
+        if let s = store.shapes.first(where: { $0.id == id }) { return .shape(s) }
+        if let r = store.rooms.first(where: { $0.id == id }) { return .room(r) }
+        return nil
+    }
+
+    /// A contextual bar for the selected item: it names the item, teaches the
+    /// drag-to-move gesture, and offers the item's primary action plus Done —
+    /// with a quick-action row (rotate / duplicate / delete) underneath so common
+    /// edits never require the full sheet.
+    private func selectionToolbar(_ item: SelectedItem) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: selectionIcon(item))
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Brand.accent)
+                    .frame(width: 42, height: 42)
+                    .background(Brand.accent.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(selectionTitle(item))
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Brand.textPrimary)
+                        .lineLimit(1)
+                    Text(selectionSubtitle(item))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Brand.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                Button { selectionPrimaryAction(item) } label: {
+                    Text(selectionPrimaryLabel(item))
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .frame(height: 42)
+                        .background(Brand.primaryFill,
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                Button { deselect() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 15, weight: .heavy))
+                        .foregroundStyle(Brand.textSecondary)
+                        .frame(width: 42, height: 42)
+                        .background(Brand.control, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .accessibilityLabel("Deselect")
+            }
+
+            quickActionRow(item)
+        }
+        .padding(10)
+        .background(Brand.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Brand.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.14), radius: 16, y: 8)
+    }
+
+    /// Duplicate / delete for the selected item (rooms only offer delete — no
+    /// duplicate API). Rotation happens directly on the canvas, via the rotate
+    /// handle or a two-finger twist.
+    @ViewBuilder
+    private func quickActionRow(_ item: SelectedItem) -> some View {
+        HStack(spacing: 8) {
+            if selectionCanDuplicate(item) {
+                quickAction(icon: "plus.square.on.square", label: "Duplicate") {
+                    duplicateSelection(item)
+                }
+            }
+            quickAction(icon: "trash", label: "Delete", tint: Brand.danger) {
+                confirmingDelete = true
+            }
+        }
+    }
+
+    private func quickAction(icon: String, label: String,
+                             tint: Color? = nil,
+                             action: @escaping () -> Void) -> some View {
+        let fg = tint ?? Brand.textPrimary
+        return Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 13, weight: .bold))
+                Text(label).font(.system(size: 13, weight: .bold))
+            }
+            .foregroundStyle(fg)
+            .frame(maxWidth: .infinity)
+            .frame(height: 38)
+            .background(tint == nil ? Brand.control : fg.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func selectionCanRotate(_ item: SelectedItem) -> Bool {
+        switch item {
+        case .table(let t): return !t.isRound
+        case .shape(let s): return s.type == .square || s.type == .rectangle
+        case .room: return false
+        }
+    }
+
+    private func selectionCanDuplicate(_ item: SelectedItem) -> Bool {
+        if case .room = item { return false }
+        return true
+    }
+
+    private func duplicateSelection(_ item: SelectedItem) {
+        switch item {
+        case .table(let t): Task { await store.duplicateTable(t) }
+        case .shape(let s): Task { await store.duplicateShape(s) }
+        case .room: break
+        }
+    }
+
+    private var deleteDialogTitle: String {
+        guard let item = selectedCanvasItem else { return "Delete item?" }
+        return "Delete \(selectionTitle(item))?"
+    }
+
+    private var deleteDialogMessage: String {
+        if case .table = selectedCanvasItem {
+            return "Guests at this table will become unassigned."
+        }
+        return "This removes it from the floor plan."
+    }
+
+    private func performDelete() {
+        guard let item = selectedCanvasItem else { return }
+        deselect()
+        switch item {
+        case .table(let t): Task { await store.deleteTable(t) }
+        case .shape(let s): Task { await store.deleteShape(s) }
+        case .room(let r): Task { await store.deleteRoom(r) }
+        }
+    }
+
+    private func selectionIcon(_ item: SelectedItem) -> String {
+        switch item {
+        case .table: return "tablecells"
+        case .shape: return "square.on.circle"
+        case .room: return "square.dashed"
+        }
+    }
+
+    private func selectionTitle(_ item: SelectedItem) -> String {
+        switch item {
+        case .table(let t): return t.name
+        case .shape(let s): return s.name
+        case .room(let r): return r.name
+        }
+    }
+
+    private func selectionSubtitle(_ item: SelectedItem) -> String {
+        let move = selectionCanRotate(item) ? "Drag or twist" : "Drag to move"
+        if case .table(let t) = item, let capacity = t.capacity, capacity > 0 {
+            return "\(move) · \(store.occupancy(of: t))/\(capacity) seated"
+        }
+        return move
+    }
+
+    private func selectionPrimaryLabel(_ item: SelectedItem) -> String {
+        if case .table = item { return "Manage" }
+        return "Edit"
+    }
+
+    private func selectionPrimaryAction(_ item: SelectedItem) {
+        switch item {
+        case .table(let t): selectedTable = t
+        case .shape(let s): editingShape = s
+        case .room(let r): editingRoom = r
+        }
+    }
+
     private func assignBanner(_ guest: Guest) -> some View {
         HStack(spacing: 12) {
             GlassAvatar(name: guest.name)
@@ -761,9 +1147,9 @@ struct FloorPlanView: View {
                        action: { fitToLayout() },
                        accessibility: "Fit to layout")
             Divider().frame(width: 40)
-            zoomButton(icon: "plus", action: { setZoom(zoom + 0.2) }, accessibility: "Zoom in")
+            zoomButton(icon: "plus", action: { zoomCentered(to: zoom + 0.2) }, accessibility: "Zoom in")
             // Current zoom percent — tap to snap back to 100%.
-            Button { setZoom(1) } label: {
+            Button { zoomCentered(to: 1) } label: {
                 Text("\(Int((effectiveZoom * 100).rounded()))%")
                     .font(.system(size: 12, weight: .bold))
                     .monospacedDigit()
@@ -771,7 +1157,7 @@ struct FloorPlanView: View {
                     .frame(width: 44, height: 28)
             }
             .accessibilityLabel("Reset zoom to 100%")
-            zoomButton(icon: "minus", action: { setZoom(zoom - 0.2) }, accessibility: "Zoom out")
+            zoomButton(icon: "minus", action: { zoomCentered(to: zoom - 0.2) }, accessibility: "Zoom out")
         }
         .background(Brand.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -791,12 +1177,12 @@ struct FloorPlanView: View {
         .accessibilityLabel(accessibility)
     }
 
-    private func conflictToast(_ text: String) -> some View {
+    private func conflictToast(_ toast: AssignToast) -> some View {
         HStack(spacing: 11) {
-            Image(systemName: "checkmark.circle")
+            Image(systemName: toast.isSuccess ? "checkmark.circle" : "exclamationmark.triangle.fill")
                 .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(Color.hex("#22C55E"))
-            Text(text)
+                .foregroundStyle(toast.isSuccess ? Color.hex("#22C55E") : Brand.warningDark)
+            Text(toast.text)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.white)
             Spacer(minLength: 0)
@@ -809,26 +1195,41 @@ struct FloorPlanView: View {
 
     // MARK: - Interaction
 
-    @ViewBuilder
-    private func tableContextMenu(_ table: SeatingTable) -> some View {
-        Button { selectedTable = table } label: {
-            Label(canEdit ? "Manage seating" : "View table", systemImage: "person.2")
+    /// Only the selected item is draggable, and only on an editable, non-assign
+    /// canvas — so a move is always a deliberate "tap to pick, then drag."
+    private func canMove(_ id: String) -> Bool {
+        canEdit && !isAssigning && selectedItemID == id
+    }
+
+    private func selectItem(_ id: String) {
+        guard selectedItemID != id else { return }
+        withAnimation(.snappy(duration: 0.18)) { selectedItemID = id }
+    }
+
+    private func deselect() {
+        withAnimation(.snappy(duration: 0.18)) { selectedItemID = nil }
+    }
+
+    /// Tap behaviour for a table: assign-mode drop, view-only peek, or the
+    /// select-then-open flow when editing (first tap selects, second opens).
+    private func handleTableTap(_ table: SeatingTable) {
+        if isAssigning { handleTap(table); return }
+        guard canEdit else { selectedTable = table; return }
+        if selectedItemID == table.id {
+            selectedTable = table
+        } else {
+            selectItem(table.id)
         }
-        if canEdit {
-            Button { editingTable = table } label: { Label("Edit table", systemImage: "pencil") }
-            Button { Task { await store.duplicateTable(table) } } label: {
-                Label("Duplicate", systemImage: "plus.square.on.square")
-            }
-            if !table.isRound {
-                Button { Task { await store.updateRotation(of: table, to: table.rotationDegrees + 15) } } label: {
-                    Label("Rotate 15°", systemImage: "rotate.right")
-                }
-            }
-            Divider()
-            Button(role: .destructive) { pendingDelete = table } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
+    }
+
+    private func handleShapeTap(_ shape: DecorShape) {
+        guard !isAssigning, canEdit else { return }
+        if selectedItemID == shape.id { editingShape = shape } else { selectItem(shape.id) }
+    }
+
+    private func handleRoomTap(_ room: FloorPlanRoom) {
+        guard !isAssigning, canEdit else { return }
+        if selectedItemID == room.id { editingRoom = room } else { selectItem(room.id) }
     }
 
     private func handleTap(_ table: SeatingTable) {
@@ -836,42 +1237,31 @@ struct FloorPlanView: View {
             selectedTable = table
             return
         }
-        // Assign mode: only tables with room accept the guest.
+        // Assign mode: only tables with room accept the guest. A full table
+        // answers with an error haptic and a short-lived warning toast, so the
+        // tap never just dies silently.
         let open = SeatingLogic.remainingSeats(table, guests: store.guests)
         let hasRoom = open == nil || (open ?? 0) > 0
-        guard hasRoom else { return }
-        withAnimation { toast = "No conflicts. \(table.name) has room." }
+        guard hasRoom else {
+            errorTick &+= 1
+            withAnimation { toast = AssignToast(text: "\(table.name) is full — tap a table with open seats.",
+                                                isSuccess: false) }
+            Task {
+                try? await Task.sleep(for: .seconds(2.4))
+                if toast?.isSuccess == false {
+                    withAnimation { toast = nil }
+                }
+            }
+            return
+        }
+        withAnimation { toast = AssignToast(text: "No conflicts. \(table.name) has room.",
+                                            isSuccess: true) }
         Task {
             await store.assignWithUndo(guest, toTable: table.id)
             onFinishAssigning?()
         }
     }
 
-    @ViewBuilder
-    private func shapeContextMenu(_ shape: DecorShape) -> some View {
-        Button { editingShape = shape } label: { Label("Edit shape", systemImage: "pencil") }
-        Button { Task { await store.duplicateShape(shape) } } label: {
-            Label("Duplicate", systemImage: "plus.square.on.square")
-        }
-        if !shape.isRound {
-            Button { Task { await store.updateShapeRotation(of: shape, to: shape.rotationDegrees + 15) } } label: {
-                Label("Rotate 15°", systemImage: "rotate.right")
-            }
-        }
-        Divider()
-        Button(role: .destructive) { pendingDeleteShape = shape } label: {
-            Label("Delete", systemImage: "trash")
-        }
-    }
-
-    @ViewBuilder
-    private func roomContextMenu(_ room: FloorPlanRoom) -> some View {
-        Button { editingRoom = room } label: { Label("Edit room", systemImage: "pencil") }
-        Divider()
-        Button(role: .destructive) { pendingDeleteRoom = room } label: {
-            Label("Delete", systemImage: "trash")
-        }
-    }
 
     // MARK: - Positioning + drag (tables, shapes, rooms share one path)
 
@@ -957,60 +1347,221 @@ struct FloorPlanView: View {
                           guides: snap.guides, colliding: colliding)
     }
 
-    private func dragGesture(forTable table: SeatingTable) -> some Gesture {
+    /// Drag-to-move for the *selected* item. Selection (a tap) is what arms the
+    /// move, so this is a plain one-finger drag — immediate and direct, no hold.
+    /// Unselected items carry no drag gesture, so a pan over them scrolls the
+    /// canvas instead and a move is never accidental. Fires a light haptic each
+    /// time the item snaps onto an alignment guide.
+    private func moveGesture(id: String, kind: ItemKind,
+                             baseX: Double, baseY: Double,
+                             width: Double, height: Double, rotation: Double,
+                             commit: @escaping (CGPoint) -> Void) -> some Gesture {
         DragGesture()
             .onChanged { value in
-                activeDrag = resolveDrag(id: table.id, kind: .table,
-                                         baseX: table.positionX ?? 80, baseY: table.positionY ?? 80,
-                                         width: table.width, height: table.height,
-                                         rotation: table.rotationDegrees, translation: value.translation)
+                let d = resolveDrag(id: id, kind: kind, baseX: baseX, baseY: baseY,
+                                    width: width, height: height, rotation: rotation,
+                                    translation: value.translation)
+                noteSnapHaptic(d.guides)
+                activeDrag = d
             }
             .onEnded { value in
-                let d = resolveDrag(id: table.id, kind: .table,
-                                    baseX: table.positionX ?? 80, baseY: table.positionY ?? 80,
-                                    width: table.width, height: table.height,
-                                    rotation: table.rotationDegrees, translation: value.translation)
-                // Commit the new position and drop the drag together, in one
-                // render pass, so the table never snaps back to its old spot.
-                store.updatePosition(of: table, x: d.topLeft.x, y: d.topLeft.y)
+                // Commit the new position and drop the drag together, in one render
+                // pass, so the item never flashes back to its old spot.
+                let d = resolveDrag(id: id, kind: kind, baseX: baseX, baseY: baseY,
+                                    width: width, height: height, rotation: rotation,
+                                    translation: value.translation)
+                commit(CGPoint(x: d.topLeft.x, y: d.topLeft.y))
                 activeDrag = nil
+                lastGuideSig = ""
             }
+    }
+
+    /// Bumps `snapTick` (driving a light haptic) the moment a drag engages a new
+    /// set of alignment guides — i.e. when the item visibly snaps into line.
+    private func noteSnapHaptic(_ guides: [FloorPlanGeometry.Guide]) {
+        let sig = guides.map { "\($0.axis)|\(Int($0.position))" }.sorted().joined(separator: ",")
+        guard sig != lastGuideSig else { return }
+        if !guides.isEmpty { snapTick &+= 1 }
+        lastGuideSig = sig
+    }
+
+    private func dragGesture(forTable table: SeatingTable) -> some Gesture {
+        moveGesture(id: table.id, kind: .table,
+                    baseX: table.positionX ?? 80, baseY: table.positionY ?? 80,
+                    width: table.width, height: table.height, rotation: table.rotationDegrees) { p in
+            store.updatePosition(of: table, x: p.x, y: p.y)
+        }
     }
 
     private func dragGesture(forShape shape: DecorShape) -> some Gesture {
-        DragGesture()
-            .onChanged { value in
-                activeDrag = resolveDrag(id: shape.id, kind: .shape,
-                                         baseX: shape.positionX ?? 120, baseY: shape.positionY ?? 120,
-                                         width: shape.width, height: shape.height,
-                                         rotation: shape.rotationDegrees, translation: value.translation)
-            }
-            .onEnded { value in
-                let d = resolveDrag(id: shape.id, kind: .shape,
-                                    baseX: shape.positionX ?? 120, baseY: shape.positionY ?? 120,
-                                    width: shape.width, height: shape.height,
-                                    rotation: shape.rotationDegrees, translation: value.translation)
-                store.updateShapePosition(of: shape, x: d.topLeft.x, y: d.topLeft.y)
-                activeDrag = nil
-            }
+        moveGesture(id: shape.id, kind: .shape,
+                    baseX: shape.positionX ?? 120, baseY: shape.positionY ?? 120,
+                    width: shape.width, height: shape.height, rotation: shape.rotationDegrees) { p in
+            store.updateShapePosition(of: shape, x: p.x, y: p.y)
+        }
     }
 
     private func dragGesture(forRoom room: FloorPlanRoom) -> some Gesture {
-        DragGesture()
+        moveGesture(id: room.id, kind: .room,
+                    baseX: room.positionX, baseY: room.positionY,
+                    width: room.widthPoints, height: room.heightPoints, rotation: 0) { p in
+            store.updateRoomPosition(of: room, x: p.x, y: p.y)
+        }
+    }
+
+    // MARK: - Two-finger rotate (tables + shapes)
+
+    /// Twist only works on the selected item (same arming rule as drag), and
+    /// only where rotation means anything — a circle spun 40° looks identical.
+    private func canTwist(_ table: SeatingTable) -> Bool {
+        canMove(table.id) && !table.isRound
+    }
+
+    private func canTwist(_ shape: DecorShape) -> Bool {
+        canMove(shape.id) && (shape.type == .square || shape.type == .rectangle)
+    }
+
+    /// Soft detents every 15°: within 4° of one, the angle locks onto it (and a
+    /// click haptic fires via `rotateSnapTick`); otherwise the twist is free.
+    private func detentAngle(_ raw: Double) -> (degrees: Double, detent: Double?) {
+        let nearest = (raw / 15).rounded() * 15
+        return abs(raw - nearest) <= 4 ? (nearest, nearest) : (raw, nil)
+    }
+
+    /// Two-finger twist on the selected item: rotates live from the item's
+    /// committed angle, clicks onto 15° detents, and commits like a drag —
+    /// synchronously, so the item never flashes back to its old angle.
+    private func twistGesture(id: String, base: Double,
+                              commit: @escaping (Double) -> Void) -> some Gesture {
+        RotateGesture()
             .onChanged { value in
-                activeDrag = resolveDrag(id: room.id, kind: .room,
-                                         baseX: room.positionX, baseY: room.positionY,
-                                         width: room.widthPoints, height: room.heightPoints,
-                                         rotation: 0, translation: value.translation)
+                let resolved = detentAngle(base + value.rotation.degrees)
+                if let detent = resolved.detent, detent != activeRotation?.detent {
+                    rotateSnapTick &+= 1
+                }
+                activeRotation = ActiveRotation(id: id, degrees: resolved.degrees,
+                                                detent: resolved.detent)
             }
             .onEnded { value in
-                let d = resolveDrag(id: room.id, kind: .room,
-                                    baseX: room.positionX, baseY: room.positionY,
-                                    width: room.widthPoints, height: room.heightPoints,
-                                    rotation: 0, translation: value.translation)
-                store.updateRoomPosition(of: room, x: d.topLeft.x, y: d.topLeft.y)
-                activeDrag = nil
+                let resolved = detentAngle(base + value.rotation.degrees)
+                commit(resolved.degrees)
+                activeRotation = nil
             }
+    }
+
+    private func twistGesture(forTable table: SeatingTable) -> some Gesture {
+        twistGesture(id: table.id, base: table.rotationDegrees) { degrees in
+            store.commitRotation(of: table, to: degrees)
+        }
+    }
+
+    private func twistGesture(forShape shape: DecorShape) -> some Gesture {
+        twistGesture(id: shape.id, base: shape.rotationDegrees) { degrees in
+            store.commitShapeRotation(of: shape, to: degrees)
+        }
+    }
+
+    // MARK: - Rotate handle (web-canvas parity)
+
+    /// Names the unscaled canvas space so the handle's drag can do its angle
+    /// math in the same coordinates the items are positioned in.
+    private static let canvasSpace = "floorPlanCanvas"
+
+    /// The visible rotate affordance from the web canvas: a stem + knob rising
+    /// from the selected item's top edge. Dragging the knob spins the item
+    /// about its center, sharing the twist gesture's live state, 15° detents,
+    /// and synchronous commit. Hidden while the item itself is being dragged.
+    @ViewBuilder
+    private var rotationHandleOverlay: some View {
+        if canEdit, !isAssigning, activeDrag == nil, let item = selectedCanvasItem {
+            switch item {
+            case .table(let t) where !t.isRound:
+                rotationHandle(id: t.id,
+                               center: tableCenter(t),
+                               size: CGSize(width: t.width, height: t.height),
+                               base: t.rotationDegrees) { store.commitRotation(of: t, to: $0) }
+            case .shape(let s) where s.type == .square || s.type == .rectangle:
+                rotationHandle(id: s.id,
+                               center: center(id: s.id,
+                                              baseX: s.positionX ?? 120, baseY: s.positionY ?? 120,
+                                              width: s.width, height: s.height),
+                               size: CGSize(width: s.width, height: s.height),
+                               base: s.rotationDegrees) { store.commitShapeRotation(of: s, to: $0) }
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    private func rotationHandle(id: String, center: CGPoint, size: CGSize,
+                                base: Double, commit: @escaping (Double) -> Void) -> some View {
+        let live = activeRotation?.id == id ? (activeRotation?.degrees ?? base) : base
+        let clearance: CGFloat = 32     // clears the chair ring around the body
+        let stemLength: CGFloat = 18
+        let knob: CGFloat = 16
+        let stemBase = size.height / 2 + clearance
+
+        return ZStack {
+            // Stem rising from just past the chair ring up to the knob.
+            Rectangle()
+                .fill(Brand.accent)
+                .frame(width: 1.5, height: stemLength)
+                .offset(y: -(stemBase + stemLength / 2))
+                .allowsHitTesting(false)
+
+            // The knob — small to look at, generous to grab.
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Brand.card)
+                .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(Brand.accent, lineWidth: 2))
+                .frame(width: knob, height: knob)
+                .contentShape(Circle().scale(2.8))
+                .offset(y: -(stemBase + stemLength + knob / 2))
+                .gesture(knobDrag(id: id, center: center, commit: commit))
+        }
+        .rotationEffect(.degrees(live))
+        .position(center)
+        // VoiceOver rotates via the rotation stepper in the item's edit sheet.
+        .accessibilityHidden(true)
+    }
+
+    /// Dragging the knob: the item's angle follows the finger's bearing from
+    /// the item center (the knob rides at "up", hence the +90°).
+    private func knobDrag(id: String, center: CGPoint,
+                          commit: @escaping (Double) -> Void) -> some Gesture {
+        DragGesture(coordinateSpace: .named(Self.canvasSpace))
+            .onChanged { value in
+                let resolved = detentAngle(knobAngle(value.location, around: center))
+                if let detent = resolved.detent, detent != activeRotation?.detent {
+                    rotateSnapTick &+= 1
+                }
+                activeRotation = ActiveRotation(id: id, degrees: resolved.degrees,
+                                                detent: resolved.detent)
+            }
+            .onEnded { value in
+                let resolved = detentAngle(knobAngle(value.location, around: center))
+                commit(resolved.degrees)
+                activeRotation = nil
+            }
+    }
+
+    private func knobAngle(_ location: CGPoint, around center: CGPoint) -> Double {
+        Angle(radians: atan2(location.y - center.y, location.x - center.x)).degrees + 90
+    }
+}
+
+private extension View {
+    /// The "selected / moving" look for a floor-plan item: a gentle lift with a
+    /// soft shadow, floated above its neighbors. Grows a touch more while actively
+    /// dragging so the held item reads as picked up.
+    func floorPlanSelected(_ selected: Bool, dragging: Bool) -> some View {
+        let active = selected || dragging
+        return scaleEffect(dragging ? 1.06 : (selected ? 1.03 : 1), anchor: .center)
+            .shadow(color: .black.opacity(active ? 0.22 : 0),
+                    radius: active ? 16 : 0, x: 0, y: active ? 10 : 0)
+            .zIndex(active ? 1 : 0)
+            .animation(.snappy(duration: 0.18), value: active)
+            .animation(.snappy(duration: 0.12), value: dragging)
     }
 }
 
@@ -1025,6 +1576,9 @@ struct TableNodeView: View {
     var openSeats: Int = 0
     var pulse: Bool = false
     var isColliding: Bool = false
+    /// True while a two-finger twist is driving the angle — the rotation must
+    /// track the fingers 1:1, so the settle animation is suppressed.
+    var liveRotating: Bool = false
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1044,8 +1598,19 @@ struct TableNodeView: View {
             label
         }
         .rotationEffect(.degrees(table.rotationDegrees))
+        .animation(liveRotating ? nil : .snappy(duration: 0.25), value: table.rotationDegrees)
         .frame(width: side, height: side)
         .opacity(assigning && isFull ? 0.45 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint(assigning
+                           ? (isFull ? "Full — no open seats" : "Double tap to seat the guest here")
+                           : "Double tap to select")
+    }
+
+    private var accessibilityText: String {
+        guard capacity > 0 else { return "\(table.name), \(occupancy) seated" }
+        return "\(table.name), \(occupancy) of \(capacity) seated"
     }
 
     // MARK: Body
@@ -1261,16 +1826,19 @@ struct TableNodeView: View {
 /// gestures attached by `roomLayer` effectively bind to the chip.
 struct RoomNodeView: View {
     let room: FloorPlanRoom
+    var isSelected: Bool = false
 
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let fill = scheme == .dark ? Color.white.opacity(0.03) : Color.hex(room.colorHex).opacity(0.5)
-        let stroke = scheme == .dark ? Color.white.opacity(0.4) : Brand.slate500.opacity(0.55)
+        let stroke = isSelected ? Brand.accent
+                                : (scheme == .dark ? Color.white.opacity(0.4) : Brand.slate500.opacity(0.55))
         RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(fill)
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(stroke, style: StrokeStyle(lineWidth: 2, dash: [10, 6])))
+                .strokeBorder(stroke, style: StrokeStyle(lineWidth: isSelected ? 3 : 2,
+                                                         dash: isSelected ? [] : [10, 6])))
             .allowsHitTesting(false)
             .overlay(alignment: .topLeading) { nameChip }
             .accessibilityElement()
@@ -1298,6 +1866,9 @@ struct RoomNodeView: View {
 struct ShapeNodeView: View {
     let shape: DecorShape
     var isColliding: Bool = false
+    var isSelected: Bool = false
+    /// True while a two-finger twist is driving the angle (see TableNodeView).
+    var liveRotating: Bool = false
 
     @Environment(\.colorScheme) private var scheme
 
@@ -1306,6 +1877,7 @@ struct ShapeNodeView: View {
             body(for: shape.type)
                 .frame(width: shape.width, height: shape.height)
                 .rotationEffect(.degrees(shape.rotationDegrees))
+                .animation(liveRotating ? nil : .snappy(duration: 0.25), value: shape.rotationDegrees)
             Text(shape.name)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Brand.textSecondary)
@@ -1314,14 +1886,17 @@ struct ShapeNodeView: View {
                 .padding(.horizontal, 6)
         }
         .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(shape.name), decoration")
     }
 
     @ViewBuilder
     private func body(for type: TableShape) -> some View {
         let fill = scheme == .dark ? Color.hex("#11203A") : Brand.slate100
         let stroke = isColliding ? Brand.collisionStroke
+                                 : isSelected ? Brand.accent
                                  : (scheme == .dark ? Color.white.opacity(0.45) : Brand.slate400)
-        let lineWidth: CGFloat = isColliding ? 3 : 1.5
+        let lineWidth: CGFloat = (isColliding || isSelected) ? 3 : 1.5
         switch type {
         case .circle, .oval:
             Ellipse().fill(fill)

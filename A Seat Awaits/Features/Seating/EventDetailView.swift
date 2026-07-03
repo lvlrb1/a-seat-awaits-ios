@@ -125,16 +125,11 @@ struct EventDetailView: View {
             HStack {
                 // The back affordance is provided by the native nav bar.
                 Spacer(minLength: 0)
-                HStack(spacing: 5) {
-                    Text(event.name)
-                        .font(.system(size: 17, weight: .bold))
-                        .tracking(-0.2)
-                        .foregroundStyle(Brand.textPrimary)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Brand.slate400)
-                }
+                Text(event.name)
+                    .font(.system(size: 17, weight: .bold))
+                    .tracking(-0.2)
+                    .foregroundStyle(Brand.textPrimary)
+                    .lineLimit(1)
                 Spacer(minLength: 0)
                 AvatarStack(names: collaboratorNames)
             }

@@ -18,6 +18,7 @@ struct TableDetailSheet: View {
     @State private var showingEdit = false
     /// Guests ticked in the multi-select assign picker, by id.
     @State private var assignSelection: Set<String> = []
+    @State private var assignSearch = ""
 
     /// Always read the latest table from the store so edits/duplicates made from
     /// this sheet reflect immediately (the passed-in `table` is a snapshot).
@@ -30,6 +31,15 @@ struct TableDetailSheet: View {
     private var unassigned: [Guest] {
         store.guests.filter { !$0.isAssigned }
             .sorted { $0.lastNameKey < $1.lastNameKey }
+    }
+    /// `unassigned` narrowed by the picker's search field.
+    private var unassignedMatchingSearch: [Guest] {
+        let query = assignSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return unassigned }
+        return unassigned.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || ($0.groupName?.localizedCaseInsensitiveContains(query) ?? false)
+        }
     }
     private var canEdit: Bool { store.canEdit }
     private var capacity: Int { t.capacity ?? 0 }
@@ -224,6 +234,7 @@ struct TableDetailSheet: View {
     private var assignSection: some View {
         Button {
             assignSelection = []
+            assignSearch = ""
             showingAssign = true
         } label: {
             HStack(spacing: 8) {
@@ -265,28 +276,35 @@ struct TableDetailSheet: View {
             if unassigned.isEmpty {
                 emptyHint("Everyone is seated.")
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(unassigned.enumerated()), id: \.element.id) { idx, guest in
-                        let picked = assignSelection.contains(guest.id)
-                        // Block ticking new guests once every open seat is spoken
-                        // for, but always allow un-ticking.
-                        let blocked = !picked && selectionAtCapacity
-                        Button {
-                            toggleAssign(guest)
-                        } label: {
-                            guestRow(guest, trailing: {
-                                Image(systemName: picked ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 22))
-                                    .foregroundStyle(picked ? Brand.accent
-                                                     : (blocked ? Brand.slate300 : Brand.slate400))
-                            })
+                SearchField(text: $assignSearch, placeholder: "Search guests", height: 42)
+
+                let rows = unassignedMatchingSearch
+                if rows.isEmpty {
+                    emptyHint("No guests match “\(assignSearch)”.")
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, guest in
+                            let picked = assignSelection.contains(guest.id)
+                            // Block ticking new guests once every open seat is spoken
+                            // for, but always allow un-ticking.
+                            let blocked = !picked && selectionAtCapacity
+                            Button {
+                                toggleAssign(guest)
+                            } label: {
+                                guestRow(guest, trailing: {
+                                    Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 22))
+                                        .foregroundStyle(picked ? Brand.accent
+                                                         : (blocked ? Brand.slate300 : Brand.slate400))
+                                })
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(blocked)
+                            if idx < rows.count - 1 { rowDivider }
                         }
-                        .buttonStyle(.plain)
-                        .disabled(blocked)
-                        if idx < unassigned.count - 1 { rowDivider }
                     }
+                    .brandCard()
                 }
-                .brandCard()
 
                 if selectionAtCapacity {
                     Text("That fills every open seat. Unseat someone or edit the table to add more.")

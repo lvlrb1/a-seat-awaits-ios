@@ -25,6 +25,7 @@ struct AddShapeView: View {
     @State private var note: String
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var confirmingDelete = false
 
     /// A few common landmarks to seed the name quickly.
     private let nameSuggestions = ["Dance Floor", "Stage", "Bar", "DJ Booth",
@@ -65,6 +66,7 @@ struct AddShapeView: View {
                 sizeSection
                 if !isRound { rotationSection }
                 if let errorMessage { errorSection(errorMessage) }
+                if isEditing { manageSection }
             }
             .navigationTitle(isEditing ? "Edit Shape" : "Add Shape")
             .navigationBarTitleDisplayMode(.inline)
@@ -76,6 +78,28 @@ struct AddShapeView: View {
                 }
             }
             .interactiveDismissDisabled(isSaving)
+            .confirmationDialog("Delete \(name)?", isPresented: $confirmingDelete,
+                                titleVisibility: .visible) {
+                Button("Delete shape", role: .destructive) {
+                    if let editing { Task { await store.deleteShape(editing); dismiss() } }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+        }
+    }
+
+    private var manageSection: some View {
+        Section {
+            Button {
+                if let editing { Task { await store.duplicateShape(editing); dismiss() } }
+            } label: {
+                Label("Duplicate", systemImage: "plus.square.on.square")
+            }
+            .disabled(isSaving)
+            Button(role: .destructive) { confirmingDelete = true } label: {
+                Label("Delete shape", systemImage: "trash")
+            }
+            .disabled(isSaving)
         }
     }
 
