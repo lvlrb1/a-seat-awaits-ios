@@ -21,5 +21,13 @@
 			</array>
 		</dict>
 	</array>
+	<!--
+	  The app only uses HTTPS/TLS (URLSession) and CryptoKit's SHA256 for the
+	  Sign in with Apple nonce — both are Apple's own OS-provided encryption,
+	  not a custom/proprietary algorithm. This qualifies for the export
+	  compliance exemption, so this key skips the manual prompt on each upload.
+	-->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
