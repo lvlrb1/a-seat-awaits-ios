@@ -168,7 +168,7 @@ struct OnboardingView: View {
                         if isSignUp {
                             LabeledField(title: "Full name",
                                          isFocused: focusedField == .fullName) {
-                                TextField("Brooke Fielding", text: $model.fullName)
+                                TextField("", text: $model.fullName, prompt: Text("Brooke Fielding").foregroundStyle(Brand.slate400))
                                     .textContentType(.name)
                                     .focused($focusedField, equals: .fullName)
                                     .submitLabel(.next)
@@ -178,7 +178,7 @@ struct OnboardingView: View {
 
                         LabeledField(title: "Email",
                                      isFocused: focusedField == .email) {
-                            TextField("brooke@evergreen-events.co", text: $model.email)
+                            TextField("", text: $model.email, prompt: Text("brooke@evergreen-events.co").foregroundStyle(Brand.slate400))
                                 .textContentType(.emailAddress)
                                 .keyboardType(.emailAddress)
                                 .textInputAutocapitalization(.never)
@@ -320,9 +320,9 @@ struct OnboardingView: View {
             HStack(spacing: 12) {
                 Group {
                     if showPassword {
-                        TextField("••••••••••", text: $model.password)
+                        TextField("", text: $model.password, prompt: Text("••••••••••").foregroundStyle(Brand.slate400))
                     } else {
-                        SecureField("••••••••••", text: $model.password)
+                        SecureField("", text: $model.password, prompt: Text("••••••••••").foregroundStyle(Brand.slate400))
                     }
                 }
                 .font(.system(size: 16))
