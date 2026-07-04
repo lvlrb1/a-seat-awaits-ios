@@ -49,7 +49,7 @@ struct RequestPasswordResetView: View {
                         .padding(.top, 10)
 
                     LabeledField(title: "Email", isFocused: focused) {
-                        TextField("", text: $model.resetEmail, prompt: Text("brooke@evergreen-events.co").foregroundStyle(Brand.slate400))
+                        TextField("", text: $model.resetEmail, prompt: Text("Email").foregroundStyle(Brand.slate400))
                             .textContentType(.emailAddress)
                             .keyboardType(.emailAddress)
                             .textInputAutocapitalization(.never)

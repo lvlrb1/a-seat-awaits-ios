@@ -69,7 +69,7 @@ struct InviteCollaboratorView: View {
             }
 
             LabeledField(title: "Email", isFocused: focused == .email) {
-                TextField("", text: $email, prompt: Text("brooke@evergreen-events.co").foregroundStyle(Brand.slate400))
+                TextField("", text: $email, prompt: Text("Email").foregroundStyle(Brand.slate400))
                     .textContentType(.emailAddress)
                     .keyboardType(.emailAddress)
                     .textInputAutocapitalization(.never)

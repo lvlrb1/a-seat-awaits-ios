@@ -178,7 +178,7 @@ struct OnboardingView: View {
 
                         LabeledField(title: "Email",
                                      isFocused: focusedField == .email) {
-                            TextField("", text: $model.email, prompt: Text("brooke@evergreen-events.co").foregroundStyle(Brand.slate400))
+                            TextField("", text: $model.email, prompt: Text("Email").foregroundStyle(Brand.slate400))
                                 .textContentType(.emailAddress)
                                 .keyboardType(.emailAddress)
                                 .textInputAutocapitalization(.never)
