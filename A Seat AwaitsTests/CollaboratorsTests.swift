@@ -119,7 +119,55 @@ struct CollaborationPlanPolicyTests {
         let on = CollaborationPlanPolicy.resolve(subscriptionTier: "signature", subscriptionStatus: "active")
         let off = CollaborationPlanPolicy.resolve(subscriptionTier: "free", subscriptionStatus: "active")
         #expect(on.availabilityMessage == "Collaboration is enabled on your plan.")
-        #expect(off.availabilityMessage == "Your current plan doesn't include collaboration.")
+        #expect(off.availabilityMessage == "Collaboration is included with a Premium Pass or the Pro subscription.")
+    }
+
+    @Test("A Premium pass grants collaboration to an otherwise-free account")
+    func premiumPassGrantsCollaboration() {
+        let premium = EventPass(id: "p1", eventId: "e1", userId: "u1", tier: "premium",
+                                guestCap: 500, amountPaidCents: 3999, currency: "usd",
+                                provider: "apple", purchasedAt: nil, refundedAt: nil,
+                                aiImportsUsed: 0)
+        let policy = CollaborationPlanPolicy.resolve(subscriptionTier: "free",
+                                                     subscriptionStatus: nil,
+                                                     pass: premium)
+        #expect(policy.isCollaborationEnabled)
+        #expect(policy.maxCollaboratorsPerEvent == 2)
+        #expect(policy.planDisplayName == "Premium Pass")
+
+        // A refunded pass grants nothing.
+        var refunded = premium
+        refunded.refundedAt = "2026-07-01T00:00:00Z"
+        let revoked = CollaborationPlanPolicy.resolve(subscriptionTier: "free",
+                                                      subscriptionStatus: nil,
+                                                      pass: refunded)
+        #expect(revoked.isCollaborationEnabled == false)
+
+        // Standard/Starter passes don't include collaboration.
+        var standard = premium
+        standard.tier = "standard"
+        let noCollab = CollaborationPlanPolicy.resolve(subscriptionTier: "free",
+                                                       subscriptionStatus: nil,
+                                                       pass: standard)
+        #expect(noCollab.maxCollaboratorsPerEvent == 0)
+    }
+
+    @Test("Pass and subscription combine to whichever grants more")
+    func passAndSubscriptionCombine() {
+        let premium = EventPass(id: "p1", eventId: "e1", userId: "u1", tier: "premium",
+                                guestCap: 500, amountPaidCents: 3999, currency: "usd",
+                                provider: "apple", purchasedAt: nil, refundedAt: nil,
+                                aiImportsUsed: 0)
+        // Entitled Pro subscription (5) beats the Premium pass (2).
+        let elite = CollaborationPlanPolicy.resolve(subscriptionTier: "elite",
+                                                    subscriptionStatus: "active",
+                                                    pass: premium)
+        #expect(elite.maxCollaboratorsPerEvent == 5)
+        // A lapsed subscription contributes nothing; the pass still grants 2.
+        let lapsed = CollaborationPlanPolicy.resolve(subscriptionTier: "elite",
+                                                     subscriptionStatus: "canceled",
+                                                     pass: premium)
+        #expect(lapsed.maxCollaboratorsPerEvent == 2)
     }
 }
 

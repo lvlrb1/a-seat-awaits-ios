@@ -21,14 +21,13 @@ struct EventCollaboratorsView: View {
 
     @State private var store: EventCollaboratorsStore
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
+    @Environment(AppState.self) private var appState
 
     // Invite sheet
     @State private var showInvite = false
+    @State private var isPresentingPaywall = false
 
     @State private var pendingRemoval: EventCollaborator?
-
-    private static let subscriptionURL = URL(string: "https://aseatawaits.com/subscription")!
 
     init(event: Event, supabase: SupabaseClient, siteURL: URL,
          ownerName: String, ownerEmail: String) {
@@ -73,6 +72,13 @@ struct EventCollaboratorsView: View {
                 InviteCollaboratorView(store: store) {
                     showInvite = false
                     Task { await store.load(); await store.loadDeliveryStatuses() }
+                }
+            }
+            .sheet(isPresented: $isPresentingPaywall, onDismiss: {
+                Task { await store.load() }
+            }) {
+                if let supabase = appState.supabase {
+                    PaywallView(supabase: supabase, appState: appState)
                 }
             }
             .alert("Something went wrong",
@@ -164,7 +170,7 @@ struct EventCollaboratorsView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
-            Button("Upgrade Plan") { openURL(Self.subscriptionURL) }
+            Button("Upgrade Plan") { isPresentingPaywall = true }
                 .buttonStyle(.secondaryOutline)
                 .frame(maxWidth: 220)
         }

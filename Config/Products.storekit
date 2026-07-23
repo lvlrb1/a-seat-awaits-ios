@@ -1,0 +1,340 @@
+{
+  "identifier" : "F3A6B2C4-9D1E-4A7B-8C5D-2E0F1A3B4C5D",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "ASAPASS0001",
+      "localizations" : [
+        {
+          "description" : "One event, up to 50 guests",
+          "displayName" : "Starter Pass",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "aseatawaits.pass.starter",
+      "referenceName" : "Starter Pass",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "19.99",
+      "familyShareable" : false,
+      "internalID" : "ASAPASS0002",
+      "localizations" : [
+        {
+          "description" : "One event, up to 150 guests",
+          "displayName" : "Standard Pass",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "aseatawaits.pass.standard",
+      "referenceName" : "Standard Pass",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "39.99",
+      "familyShareable" : false,
+      "internalID" : "ASAPASS0003",
+      "localizations" : [
+        {
+          "description" : "One event, up to 500 guests",
+          "displayName" : "Premium Pass",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "aseatawaits.pass.premium",
+      "referenceName" : "Premium Pass",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "10.00",
+      "familyShareable" : false,
+      "internalID" : "ASAPASSUP01",
+      "localizations" : [
+        {
+          "description" : "Upgrade this event to Standard",
+          "displayName" : "Starter → Standard Upgrade",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "aseatawaits.pass.upgrade.starter_standard",
+      "referenceName" : "Pass Upgrade Starter to Standard",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "20.00",
+      "familyShareable" : false,
+      "internalID" : "ASAPASSUP02",
+      "localizations" : [
+        {
+          "description" : "Upgrade this event to Premium",
+          "displayName" : "Standard → Premium Upgrade",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "aseatawaits.pass.upgrade.standard_premium",
+      "referenceName" : "Pass Upgrade Standard to Premium",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "30.00",
+      "familyShareable" : false,
+      "internalID" : "ASAPASSUP03",
+      "localizations" : [
+        {
+          "description" : "Upgrade this event to Premium",
+          "displayName" : "Starter → Premium Upgrade",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "aseatawaits.pass.upgrade.starter_premium",
+      "referenceName" : "Pass Upgrade Starter to Premium",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "ASAPLANS001",
+      "localizations" : [
+
+      ],
+      "name" : "A Seat Awaits Plans",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "49.00",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "ASA00000001",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "One subscription for professional planners and venues",
+              "displayName" : "Pro",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "aseatawaits.sub.elite.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Elite Monthly",
+          "subscriptionGroupID" : "ASAPLANS001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "490.00",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "ASA00000002",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "One subscription for professional planners and venues",
+              "displayName" : "Pro (Yearly)",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "aseatawaits.sub.elite.annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Elite Annual",
+          "subscriptionGroupID" : "ASAPLANS001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "24.00",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "ASA00000003",
+          "introductoryOffer" : {
+            "internalID" : "ASAINTRO003",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P2W"
+          },
+          "localizations" : [
+            {
+              "description" : "Collaboration & public sharing",
+              "displayName" : "Signature",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "aseatawaits.sub.signature.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Signature Monthly",
+          "subscriptionGroupID" : "ASAPLANS001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "240.00",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "ASA00000004",
+          "introductoryOffer" : {
+            "internalID" : "ASAINTRO004",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P2W"
+          },
+          "localizations" : [
+            {
+              "description" : "Collaboration & public sharing",
+              "displayName" : "Signature (Yearly)",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "aseatawaits.sub.signature.annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Signature Annual",
+          "subscriptionGroupID" : "ASAPLANS001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "12.00",
+          "familyShareable" : false,
+          "groupNumber" : 3,
+          "internalID" : "ASA00000005",
+          "introductoryOffer" : {
+            "internalID" : "ASAINTRO005",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P2W"
+          },
+          "localizations" : [
+            {
+              "description" : "AI import, export & print",
+              "displayName" : "Essentials",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "aseatawaits.sub.essentials.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Essentials Monthly",
+          "subscriptionGroupID" : "ASAPLANS001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "120.00",
+          "familyShareable" : false,
+          "groupNumber" : 3,
+          "internalID" : "ASA00000006",
+          "introductoryOffer" : {
+            "internalID" : "ASAINTRO006",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P2W"
+          },
+          "localizations" : [
+            {
+              "description" : "AI import, export & print",
+              "displayName" : "Essentials (Yearly)",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "aseatawaits.sub.essentials.annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Essentials Annual",
+          "subscriptionGroupID" : "ASAPLANS001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "4.00",
+          "familyShareable" : false,
+          "groupNumber" : 4,
+          "internalID" : "ASA00000007",
+          "introductoryOffer" : {
+            "internalID" : "ASAINTRO007",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P2W"
+          },
+          "localizations" : [
+            {
+              "description" : "A little more room for one event",
+              "displayName" : "Core",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "aseatawaits.sub.core.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Core Monthly",
+          "subscriptionGroupID" : "ASAPLANS001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "40.00",
+          "familyShareable" : false,
+          "groupNumber" : 4,
+          "internalID" : "ASA00000008",
+          "introductoryOffer" : {
+            "internalID" : "ASAINTRO008",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P2W"
+          },
+          "localizations" : [
+            {
+              "description" : "A little more room for one event",
+              "displayName" : "Core (Yearly)",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "aseatawaits.sub.core.annual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Core Annual",
+          "subscriptionGroupID" : "ASAPLANS001",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

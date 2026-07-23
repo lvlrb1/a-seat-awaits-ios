@@ -20,10 +20,23 @@ final class AppState {
         case signedIn(AuthUser)
     }
 
-    private(set) var phase: Phase = .launching
+    private(set) var phase: Phase = .launching {
+        didSet {
+            // Every path into the signed-in state (fresh sign-in, restored
+            // session, recovery/confirmation deep links, profile edits) flows
+            // through here, so analytics identity stays in sync in one place.
+            if case .signedIn(let user) = phase {
+                Analytics.identify(user)
+            }
+        }
+    }
 
     /// The Supabase client, available once configuration loads successfully.
     private(set) var supabase: SupabaseClient?
+
+    /// StoreKit purchases + App Store entitlement sync. Created with the client;
+    /// its transaction listener is started in `bootstrap()`.
+    private(set) var subscriptionStore: SubscriptionStore?
 
     /// Public origin for guest-facing links (e.g. the event QR code's
     /// `/r/{token}` URL). Set from config; falls back to the production origin.
@@ -67,9 +80,12 @@ final class AppState {
     }
 
     init() {
+        Analytics.configure()
         do {
             let config = try AppConfig.load()
-            supabase = SupabaseClient(config: config)
+            let client = SupabaseClient(config: config)
+            supabase = client
+            subscriptionStore = SubscriptionStore(supabase: client, appState: self)
             publicSiteURL = config.publicSiteURL
         } catch {
             phase = .misconfigured(error.localizedDescription)
@@ -84,6 +100,7 @@ final class AppState {
         } else {
             phase = .signedOut
         }
+        subscriptionStore?.start()
     }
 
     func didAuthenticate(_ user: AuthUser) {
@@ -92,6 +109,7 @@ final class AppState {
 
     func signOut() async {
         await supabase?.signOut()
+        Analytics.reset()
         phase = .signedOut
     }
 

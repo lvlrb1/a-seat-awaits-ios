@@ -22,6 +22,11 @@ struct EventDetailView: View {
     @State private var exportingGuestList = false
     @State private var exportedGuestList: ExportedDocument?
 
+    /// The event's Event Pass, if the signed-in user owns one for it (RLS
+    /// returns only the purchaser's rows, so collaborators see nothing).
+    @State private var eventPass: EventPass?
+    @State private var showingPassUpgrade = false
+
     /// Anything worth putting in a floor-plan PDF.
     private var hasFloorPlan: Bool {
         !store.tables.isEmpty || !store.shapes.isEmpty || !store.rooms.isEmpty
@@ -103,12 +108,23 @@ struct EventDetailView: View {
             ShareSheet(items: [doc.url])
         }
         #endif
+        .sheet(isPresented: $showingPassUpgrade, onDismiss: {
+            Task { await loadEventPass() }
+        }) {
+            if let supabase = appState.supabase, let tier = eventPass?.passTier {
+                PaywallView(supabase: supabase, appState: appState,
+                            mode: .upgrade(eventId: event.id, from: tier))
+            }
+        }
         .overlay {
             if store.isLoading && store.guests.isEmpty && store.tables.isEmpty {
                 ProgressView("Loading…")
             }
         }
-        .task { await store.loadAll() }
+        .task {
+            await store.loadAll()
+            await loadEventPass()
+        }
         .alert("Something went wrong",
                isPresented: Binding(get: { store.errorMessage != nil },
                                     set: { if !$0 { store.errorMessage = nil } })) {
@@ -168,6 +184,10 @@ struct EventDetailView: View {
                 if let location = event.location?.nilIfBlank {
                     infoRow(icon: "mappin.and.ellipse", title: "Location", value: location)
                 }
+
+                if let pass = eventPass {
+                    passCard(pass)
+                }
                 // Manage who can collaborate on this event. Owner-only: only the
                 // owner may invite or change access (enforced by RLS server-side).
                 if store.role == .owner {
@@ -205,8 +225,80 @@ struct EventDetailView: View {
                 .opacity(store.guests.isEmpty ? 0.5 : 1)
             }
             .padding(16)
+            .readableWidth(Layout.contentWidth)
         }
         .background(Brand.canvas)
+    }
+
+    // MARK: - Event Pass
+
+    /// Loads the event's pass. Errors are non-fatal — the More tab simply
+    /// doesn't show a pass card (collaborators and legacy subscribers won't
+    /// have one).
+    private func loadEventPass() async {
+        guard let supabase = appState.supabase else { return }
+        do {
+            let rows = try await supabase.select(
+                "event_passes",
+                query: [
+                    URLQueryItem(name: "select", value: EventPass.selectColumns),
+                    URLQueryItem(name: "event_id", value: "eq.\(event.id)"),
+                ],
+                as: [EventPass].self)
+            eventPass = rows.first
+        } catch {
+            // Non-fatal: no pass card.
+        }
+    }
+
+    /// The pass that covers this event: tier, guest cap, AI-import usage, and
+    /// the in-place upgrade entry point (display only — caps are enforced
+    /// server-side).
+    private func passCard(_ pass: EventPass) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "ticket")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Brand.accent)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Event Pass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Brand.textSecondary)
+                    Text(pass.tierDisplayName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                }
+                Spacer(minLength: 0)
+                if !pass.isActive {
+                    Text("Refunded")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Brand.danger)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Brand.danger.opacity(0.12), in: Capsule())
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Up to \(pass.guestCap.formatted()) guests")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Brand.textSecondary)
+                if pass.aiImportCap > 0 {
+                    Text("AI imports used: \(pass.aiImportsUsed) of \(pass.aiImportCap)")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Brand.textSecondary)
+                }
+            }
+
+            if pass.isActive, let tier = pass.passTier, !tier.upgradeTargets.isEmpty,
+               store.role == .owner {
+                Button("Upgrade Pass") { showingPassUpgrade = true }
+                    .buttonStyle(.secondaryOutline)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .brandCard()
     }
 
     private func exportGuestList() async {

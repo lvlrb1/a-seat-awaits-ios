@@ -31,6 +31,7 @@ struct DeleteAccountView: View {
                 confirmCard
             }
             .padding(18)
+            .readableWidth(Layout.contentWidth)
         }
         .background(Brand.canvas.ignoresSafeArea())
         .scrollIndicators(.hidden)

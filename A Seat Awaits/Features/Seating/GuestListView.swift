@@ -67,9 +67,13 @@ struct GuestListView: View {
                             .onTapGesture { detailGuest = guest }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 if store.canEdit {
-                                    Button(role: .destructive) {
+                                    // Deliberately NOT role: .destructive — that makes the
+                                    // List collapse the row optimistically before the
+                                    // confirmation dialog can show.
+                                    Button {
                                         requestDelete(guest)
                                     } label: { Label("Delete", systemImage: "trash") }
+                                        .tint(.red)
 
                                     Button {
                                         detailGuest = guest
@@ -88,6 +92,22 @@ struct GuestListView: View {
                                     } label: { Label("Delete Guest", systemImage: "trash") }
                                 }
                             }
+                            // Attached per-row so the dialog's popover anchors to the
+                            // guest being deleted rather than the top of the screen.
+                            .confirmationDialog(
+                                "Remove \(guest.name)?",
+                                isPresented: Binding(get: { guestPendingDeletion?.id == guest.id },
+                                                     set: { if !$0 { guestPendingDeletion = nil } }),
+                                titleVisibility: .visible
+                            ) {
+                                Button("Delete Guest", role: .destructive) {
+                                    guestPendingDeletion = nil
+                                    Task { await store.deleteGuestWithUndo(guest) }
+                                }
+                                Button("Cancel", role: .cancel) { guestPendingDeletion = nil }
+                            } message: {
+                                Text(deletionMessage(for: guest))
+                            }
                     }
                 }
                 .listStyle(.plain)
@@ -103,24 +123,6 @@ struct GuestListView: View {
         }
         .sheet(isPresented: $showingImport) {
             ImportGuestsView(store: store)
-        }
-        .confirmationDialog(
-            guestPendingDeletion.map { "Remove \($0.name)?" } ?? "Remove guest?",
-            isPresented: Binding(get: { guestPendingDeletion != nil },
-                                 set: { if !$0 { guestPendingDeletion = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Delete Guest", role: .destructive) {
-                if let guest = guestPendingDeletion {
-                    Task { await store.deleteGuestWithUndo(guest) }
-                }
-                guestPendingDeletion = nil
-            }
-            Button("Cancel", role: .cancel) { guestPendingDeletion = nil }
-        } message: {
-            if let guest = guestPendingDeletion {
-                Text(deletionMessage(for: guest))
-            }
         }
     }
 

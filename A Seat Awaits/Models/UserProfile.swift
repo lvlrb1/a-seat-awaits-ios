@@ -12,6 +12,9 @@ nonisolated struct UserProfile: Codable, Identifiable, Equatable, Sendable {
     var fullName: String?
     var subscriptionTier: String?
     var subscriptionStatus: String?
+    /// Grandfathered free-tier accounts that may still create events without a
+    /// pass or subscription (the DB trigger honors this flag).
+    var legacyFree: Bool?
     var createdAt: String?
     var updatedAt: String?
 
@@ -20,6 +23,7 @@ nonisolated struct UserProfile: Codable, Identifiable, Equatable, Sendable {
         case fullName = "full_name"
         case subscriptionTier = "subscription_tier"
         case subscriptionStatus = "subscription_status"
+        case legacyFree = "legacy_free"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }

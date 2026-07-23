@@ -89,6 +89,7 @@ struct FindYourTableView: View {
                     }
                     .padding(.horizontal, 30)
                     .frame(maxWidth: .infinity)
+                    .readableWidth(Layout.formWidth)
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
@@ -372,6 +373,7 @@ struct FindYourTableView: View {
                 }
                 .padding(.horizontal, 24)
                 .frame(maxWidth: .infinity)
+                .readableWidth(Layout.formWidth)
             }
         }
         .preferredColorScheme(.light)

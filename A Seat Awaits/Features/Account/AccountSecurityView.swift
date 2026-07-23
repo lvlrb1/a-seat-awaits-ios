@@ -44,6 +44,7 @@ struct AccountSecurityView: View {
                 sessionsCard
             }
             .padding(18)
+            .readableWidth(Layout.contentWidth)
         }
         .background(Brand.canvas.ignoresSafeArea())
         .scrollIndicators(.hidden)

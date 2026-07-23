@@ -24,6 +24,13 @@ import Foundation
 /// A normalized, customer-facing plan tier. The raw `subscription_tier` /
 /// `billing_plan` enums use historical spellings (`basic`, `pro`) which collapse
 /// to the display names below.
+///
+/// July 2026 pricing model: `elite` is the ONLY subscription still sold, and it
+/// is marketed as "Pro". Core/Essentials/Signature are legacy (grandfathered)
+/// subscriptions — existing subscribers keep them with full entitlements, but
+/// they are never purchasable again. Never confuse the internal id `pro`
+/// (legacy Signature) with the marketed "Pro" (internal `elite`). Consumers now
+/// buy one-time Event Passes instead — see `PassTier` / `EventEntitlement`.
 nonisolated enum PlanTier: String, Sendable, Equatable, CaseIterable {
     case free
     case core
@@ -43,13 +50,16 @@ nonisolated enum PlanTier: String, Sendable, Equatable, CaseIterable {
         }
     }
 
+    /// The one customer-facing name mapping (mirrors `PLAN_DISPLAY_NAMES` in
+    /// the web repo): `basic` → "Essentials", `pro` → "Signature", and `elite`
+    /// → "Pro", the single subscription still sold.
     var displayName: String {
         switch self {
         case .free: return "Free"
         case .core: return "Core"
         case .essentials: return "Essentials"
         case .signature: return "Signature"
-        case .elite: return "Elite"
+        case .elite: return "Pro"
         }
     }
 
@@ -60,7 +70,7 @@ nonisolated enum PlanTier: String, Sendable, Equatable, CaseIterable {
         case .core: return "A little more room for one event"
         case .essentials: return "AI import, export & print for a few events"
         case .signature: return "Collaboration & public sharing for serious planners"
-        case .elite: return "Everything, at agency scale"
+        case .elite: return "One subscription for professional planners and venues"
         }
     }
 

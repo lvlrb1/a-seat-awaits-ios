@@ -17,13 +17,31 @@ struct EventListView: View {
 
     @State private var store: EventStore
     @State private var showingCreate = false
+    @State private var showingPassPaywall = false
     @State private var searchText = ""
     @State private var sortDescending = false   // false = soonest first
     @State private var eventPendingDeletion: Event?
 
+    /// Billing snapshot backing the create-event gate (created lazily — it
+    /// needs `appState`, which isn't available until the view appears).
+    @State private var account: AccountStore?
+
     init(supabase: SupabaseClient) {
         self.supabase = supabase
         _store = State(initialValue: EventStore(supabase: supabase))
+    }
+
+    /// Routes "Create Event" to the pass paywall when the account has no way
+    /// to create one (no unattached pass, no entitled subscription, not
+    /// grandfathered). UX only — the DB trigger is the real enforcement, and
+    /// `CreateEventView` catches its EVENT_PASS_REQUIRED error as the
+    /// backstop, so an unloaded snapshot fails open to the create sheet.
+    private func createEventTapped() {
+        if let snapshot = account?.snapshot, !snapshot.canCreateEvent {
+            showingPassPaywall = true
+        } else {
+            showingCreate = true
+        }
     }
 
     // MARK: Derived data
@@ -45,7 +63,6 @@ struct EventListView: View {
         return "\(part), \(firstName)"
     }
 
-    private var avatarName: String { appState.currentUser?.displayName ?? "Planner" }
 
     /// Confirmation copy that names the event's scale before deletion (F1).
     private func deletionMessage(for event: Event) -> String {
@@ -91,14 +108,22 @@ struct EventListView: View {
 
                 content
 
-                FloatingButton(title: "Create Event") { showingCreate = true }
+                FloatingButton(title: "Create Event") { createEventTapped() }
                     .padding(.trailing, 20)
                     .padding(.bottom, 24)
             }
             .undoSnackbar(store.undo)
             .toolbar(.hidden, for: .navigationBar)
-            .sheet(isPresented: $showingCreate) {
+            .sheet(isPresented: $showingCreate, onDismiss: {
+                // Creating an event may have consumed an unattached pass.
+                Task { await account?.refreshBillingState() }
+            }) {
                 CreateEventView(store: store)
+            }
+            .sheet(isPresented: $showingPassPaywall, onDismiss: {
+                Task { await account?.refreshBillingState() }
+            }) {
+                PaywallView(supabase: supabase, appState: appState)
             }
             .confirmationDialog(
                 eventPendingDeletion.map { "Delete “\($0.name)”?" } ?? "Delete event?",
@@ -122,6 +147,11 @@ struct EventListView: View {
             .task {
                 if store.events.isEmpty {
                     await store.loadDashboard(myEmail: appState.currentUser?.email)
+                }
+                if account == nil {
+                    let gate = AccountStore(supabase: supabase, appState: appState)
+                    account = gate
+                    await gate.load()
                 }
             }
             .alert("Something went wrong",
@@ -156,6 +186,7 @@ struct EventListView: View {
                     .listRowBackground(Color.clear)
             } else {
                 sortRow(count: events.count)
+                    .readableWidth(Layout.contentWidth)
                     .listRowInsets(EdgeInsets(top: 18, leading: 22, bottom: 4, trailing: 22))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -219,13 +250,9 @@ struct EventListView: View {
                 .clipped()
 
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .center) {
-                    Text(greeting)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                    Spacer()
-                    GlassAvatar(name: avatarName, size: 38)
-                }
+                Text(greeting)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
 
                 Text("My Events")
                     .font(.system(size: 32, weight: .bold))
@@ -274,7 +301,7 @@ struct EventListView: View {
         } description: {
             Text("Create your first event to start building a seating chart.")
         } actions: {
-            Button("Create Event") { showingCreate = true }
+            Button("Create Event") { createEventTapped() }
                 .buttonStyle(.borderedProminent)
                 .tint(Brand.plum)
         }
@@ -289,6 +316,7 @@ private extension View {
     /// clear background so the card shape shows on the canvas.
     func cardRow() -> some View {
         self
+            .readableWidth(Layout.contentWidth)
             .listRowInsets(EdgeInsets(top: 7, leading: 18, bottom: 7, trailing: 18))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)

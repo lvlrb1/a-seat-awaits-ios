@@ -20,7 +20,9 @@ import Foundation
 nonisolated struct SubscriptionRow: Codable, Equatable, Sendable {
     var plan: String?
     var status: String?
+    var provider: String?
     var stripePriceId: String?
+    var appleProductId: String?
     var currentPeriodStart: String?
     var currentPeriodEnd: String?
     var cancelAtPeriodEnd: Bool?
@@ -30,8 +32,9 @@ nonisolated struct SubscriptionRow: Codable, Equatable, Sendable {
     var updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
-        case plan, status
+        case plan, status, provider
         case stripePriceId = "stripe_price_id"
+        case appleProductId = "apple_product_id"
         case currentPeriodStart = "current_period_start"
         case currentPeriodEnd = "current_period_end"
         case cancelAtPeriodEnd = "cancel_at_period_end"
@@ -43,9 +46,36 @@ nonisolated struct SubscriptionRow: Codable, Equatable, Sendable {
 
     /// PostgREST `select` list for this row.
     static let selectColumns =
-        "plan,status,stripe_price_id,current_period_start,current_period_end,cancel_at_period_end,canceled_at,trial_end,created_at,updated_at"
+        "plan,status,provider,stripe_price_id,apple_product_id,current_period_start,current_period_end,cancel_at_period_end,canceled_at,trial_end,created_at,updated_at"
 
     var isCanceling: Bool { cancelAtPeriodEnd == true }
+
+    /// Where this subscription is billed. Missing/unknown values are treated as
+    /// Stripe, the only provider that existed before the column was added.
+    var billingProvider: BillingProvider {
+        BillingProvider(provider: provider, plan: plan)
+    }
+}
+
+// MARK: - Billing provider
+
+/// Which payment system bills the user's subscription. Drives what the app may
+/// show: App Store subscriptions get native purchase/management UI, while
+/// Stripe subscriptions must not be steered to external purchase pages
+/// (App Review guideline 3.1.1) — those users see neutral text instead.
+nonisolated enum BillingProvider: Sendable, Equatable {
+    /// No paid subscription (Free tier).
+    case none
+    case stripe
+    case apple
+
+    init(provider: String?, plan: String?) {
+        guard PlanTier.normalize(plan) != .free else { self = .none; return }
+        switch (provider ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "apple": self = .apple
+        default: self = .stripe
+        }
+    }
 }
 
 // MARK: - Account snapshot
@@ -57,6 +87,8 @@ nonisolated struct AccountSnapshot: Equatable, Sendable {
     var authUser: AuthUser
     var profile: UserProfile?
     var subscription: SubscriptionRow?
+    /// The user's Event Passes (attached and unattached), newest first.
+    var passes: [EventPass] = []
 
     var policy: PlanPolicy {
         PlanPolicy.resolve(subscription: subscription,
@@ -64,11 +96,47 @@ nonisolated struct AccountSnapshot: Equatable, Sendable {
                            fallbackStatus: profile?.subscriptionStatus)
     }
 
+    /// Non-refunded passes (a pass never expires; only a refund revokes it).
+    var activePasses: [EventPass] { passes.filter(\.isActive) }
+
+    /// Active passes not yet attached to an event — spendable at event creation.
+    var unattachedActivePasses: [EventPass] { activePasses.filter { !$0.isAttached } }
+
+    /// The event's active pass, if this account owns one for it.
+    func activePass(forEvent eventId: String) -> EventPass? {
+        activePasses.first { $0.eventId == eventId }
+    }
+
+    /// Whether creating an event will succeed, mirroring the DB trigger's
+    /// order: an unattached active pass, an entitled paid subscription, or the
+    /// grandfathered `legacy_free` flag. UX only — the trigger is enforcement.
+    var canCreateEvent: Bool {
+        if !unattachedActivePasses.isEmpty { return true }
+        if policy.isEntitled && policy.nominalTier != .free { return true }
+        return profile?.legacyFree == true
+    }
+
     var fullName: String {
         profile?.fullName?.nilIfBlank ?? authUser.userMetadata?.fullName?.nilIfBlank ?? "Planner"
     }
 
     var email: String? { authUser.email }
+
+    /// Where the current subscription is billed (`.none` for Free).
+    var billingProvider: BillingProvider {
+        subscription?.billingProvider ?? .none
+    }
+
+    /// True when the user has a Stripe-billed subscription that isn't fully
+    /// over — including payment-issue states, since those must be resolved on
+    /// the web, not by buying a second subscription through Apple.
+    var hasActiveStripeBilling: Bool {
+        guard billingProvider == .stripe else { return false }
+        switch SubscriptionStatus.from(subscription?.status) {
+        case .canceled, .incompleteExpired: return false
+        default: return true
+        }
+    }
 
     /// Account creation date, preferring the auth record, then the profile row.
     var createdDate: Date? {
@@ -99,11 +167,10 @@ nonisolated enum AccountLinks {
     static let supportEmail = URL(string: "mailto:support@aseatawaits.com")!
 
     /// Whether the app should surface an external upgrade/purchase call-to-action.
-    /// Kept configurable per storefront: some App Store storefronts disallow
-    /// linking out to purchase digital goods, so this can be disabled at build
-    /// time without touching the screens. Subscription *management* of an
-    /// existing plan (the billing portal) is always permitted.
-    static let externalUpgradeEnabled = true
+    /// Disabled: purchases go through StoreKit In-App Purchase (App Review
+    /// guideline 3.1.1). Existing Stripe subscribers see neutral, non-tappable
+    /// billing text rather than a link to the web portal.
+    static let externalUpgradeEnabled = false
 
     /// Where the upgrade CTA points when enabled.
     static let upgrade = pricing

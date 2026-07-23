@@ -13,8 +13,9 @@ import SwiftUI
 struct GuestListExportView: View {
     @Bindable var store: AccountStore
     let policy: PlanPolicy
-    @Environment(\.openURL) private var openURL
+    @Environment(AppState.self) private var appState
 
+    @State private var isPresentingPaywall = false
     @State private var events: [Event] = []
     @State private var isLoading = true
     @State private var loadError: String?
@@ -22,15 +23,28 @@ struct GuestListExportView: View {
     @State private var exportError: String?
     @State private var exported: ExportedDocument?
 
-    private var canExport: Bool { policy.canExportAndPrint }
+    /// Account-wide export entitlement (subscription-based).
+    private var canExportViaSubscription: Bool { policy.canExportAndPrint }
+
+    /// Per-event entitlement: every Event Pass tier includes export & print,
+    /// so an event with an active pass is exportable even on a Free account.
+    private func canExport(_ event: Event) -> Bool {
+        canExportViaSubscription || store.snapshot?.activePass(forEvent: event.id) != nil
+    }
+
+    /// True when nothing on this account can be exported.
+    private var isFullyLocked: Bool {
+        !canExportViaSubscription && !events.contains(where: canExport)
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                if !canExport { entitlementCard }
+                if !isLoading && isFullyLocked { entitlementCard }
                 content
             }
             .padding(18)
+            .readableWidth(Layout.contentWidth)
         }
         .background(Brand.canvas.ignoresSafeArea())
         .scrollIndicators(.hidden)
@@ -71,18 +85,23 @@ struct GuestListExportView: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Brand.textPrimary)
             }
-            Text("Exporting and printing is available on Essentials and above. You can still browse your events below.")
+            Text("Exporting and printing is included with every Event Pass and with the Pro subscription. You can still browse your events below.")
                 .font(.system(size: 13))
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if AccountLinks.externalUpgradeEnabled {
-                Button("View Plans") { openURL(AccountLinks.upgrade) }
-                    .buttonStyle(.secondaryOutline)
-            }
+            Button("View Passes & Pro") { isPresentingPaywall = true }
+                .buttonStyle(.secondaryOutline)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .brandCard()
+        .sheet(isPresented: $isPresentingPaywall, onDismiss: {
+            Task { await store.refreshBillingState() }
+        }) {
+            if let supabase = appState.supabase {
+                PaywallView(supabase: supabase, appState: appState)
+            }
+        }
     }
 
     private var eventsList: some View {
@@ -117,16 +136,16 @@ struct GuestListExportView: View {
                 if exportingEventID == event.id {
                     ProgressView()
                 } else {
-                    Image(systemName: canExport ? "square.and.arrow.up" : "lock")
+                    Image(systemName: canExport(event) ? "square.and.arrow.up" : "lock")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(canExport ? Brand.accent : Brand.slate300)
+                        .foregroundStyle(canExport(event) ? Brand.accent : Brand.slate300)
                 }
             }
             .padding(16)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!canExport || exportingEventID != nil)
+        .disabled(!canExport(event) || exportingEventID != nil)
     }
 
     private var emptyState: some View {
@@ -180,7 +199,7 @@ struct GuestListExportView: View {
     }
 
     private func export(_ event: Event) async {
-        guard canExport, exportingEventID == nil else { return }
+        guard canExport(event), exportingEventID == nil else { return }
         exportingEventID = event.id
         exportError = nil
         defer { exportingEventID = nil }

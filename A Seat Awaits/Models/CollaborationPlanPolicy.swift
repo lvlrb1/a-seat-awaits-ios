@@ -42,14 +42,14 @@ nonisolated enum CollaborationTier: Sendable, Equatable, CaseIterable {
         }
     }
 
-    /// Customer-facing plan name.
+    /// Customer-facing plan name (`elite` is sold as "Pro" — see `PlanTier`).
     var displayName: String {
         switch self {
         case .free: return "Free"
         case .core: return "Core"
         case .essentials: return "Essentials"
         case .signature: return "Signature"
-        case .elite: return "Elite"
+        case .elite: return "Pro"
         }
     }
 
@@ -68,46 +68,69 @@ nonisolated enum CollaborationTier: Sendable, Equatable, CaseIterable {
     }
 }
 
-/// The effective collaboration policy for the signed-in user, combining the
-/// normalized tier with the subscription status entitlement check.
+/// The effective collaboration policy for one event: the owner's subscription
+/// entitlement combined with the event's Event Pass, whichever grants more.
+/// A Premium pass grants 2 collaborators; the Pro subscription (internal
+/// `elite`) grants 5; legacy Signature (internal `pro`) grants 2.
 nonisolated struct CollaborationPlanPolicy: Equatable, Sendable {
     let tier: CollaborationTier
     /// True when the subscription status is `active` or `trialing`.
     let isEntitled: Bool
+    /// The event's active pass tier, if the event has one.
+    let passTier: PassTier?
 
     /// Subscription statuses that grant the tier's entitlements.
     static let entitledStatuses: Set<String> = ["active", "trialing"]
 
-    /// Resolves the policy from the raw `users` row fields.
-    static func resolve(subscriptionTier: String?, subscriptionStatus: String?) -> CollaborationPlanPolicy {
+    /// Resolves the policy from the raw `users` row fields plus the event's pass.
+    static func resolve(subscriptionTier: String?, subscriptionStatus: String?,
+                        pass: EventPass? = nil) -> CollaborationPlanPolicy {
         let tier = CollaborationTier.normalize(subscriptionTier)
         let status = (subscriptionStatus ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return CollaborationPlanPolicy(tier: tier, isEntitled: entitledStatuses.contains(status))
+        return CollaborationPlanPolicy(tier: tier,
+                                       isEntitled: entitledStatuses.contains(status),
+                                       passTier: (pass?.isActive == true) ? pass?.passTier : nil)
     }
 
     /// Free policy fallback (used when no profile could be loaded).
-    static let free = CollaborationPlanPolicy(tier: .free, isEntitled: false)
+    static let free = CollaborationPlanPolicy(tier: .free, isEntitled: false, passTier: nil)
 
-    var planDisplayName: String { tier.displayName }
+    /// What to name the entitlement in copy: the pass when it's what grants
+    /// collaboration, otherwise the subscription plan.
+    var planDisplayName: String {
+        if let passTier, passTier.collaboration, subscriptionCollaboratorLimit == 0 {
+            return passTier.displayName
+        }
+        return tier.displayName
+    }
 
-    /// True when already on the highest collaboration tier — there is nothing to
-    /// upgrade to, so the CTA should read "Manage" rather than "Upgrade".
-    var isTopTier: Bool { tier == .elite }
+    /// True when nothing higher exists for this event: the Pro subscription is
+    /// the ceiling, so the CTA reads "Manage" rather than "Upgrade".
+    var isTopTier: Bool { isEntitled && tier == .elite }
 
-    /// Collaboration is only enabled when both the tier supports it *and* the
-    /// subscription is in good standing. Otherwise we fall back to Free limits.
-    var isCollaborationEnabled: Bool { isEntitled && tier.collaborationEnabled }
+    private var subscriptionCollaboratorLimit: Int {
+        (isEntitled && tier.collaborationEnabled) ? tier.maxCollaboratorsPerEvent : 0
+    }
 
-    /// Effective per-event collaborator limit (0 when collaboration is disabled).
+    private var passCollaboratorLimit: Int {
+        passTier?.maxCollaboratorsPerEvent ?? 0
+    }
+
+    /// Collaboration is enabled by an entitled collaborative subscription OR
+    /// the event's Premium pass. Otherwise Free limits apply.
+    var isCollaborationEnabled: Bool { maxCollaboratorsPerEvent > 0 }
+
+    /// Effective per-event collaborator limit — the more generous of the
+    /// subscription's and the pass's (0 when collaboration is disabled).
     var maxCollaboratorsPerEvent: Int {
-        isCollaborationEnabled ? tier.maxCollaboratorsPerEvent : 0
+        max(subscriptionCollaboratorLimit, passCollaboratorLimit)
     }
 
     var availabilityMessage: String {
         isCollaborationEnabled
             ? "Collaboration is enabled on your plan."
-            : "Your current plan doesn't include collaboration."
+            : "Collaboration is included with a Premium Pass or the Pro subscription."
     }
 }

@@ -109,7 +109,26 @@ final class EventCollaboratorsStore {
         guard let profile = rows.first else { return .free }
         return CollaborationPlanPolicy.resolve(
             subscriptionTier: profile.subscriptionTier,
-            subscriptionStatus: profile.subscriptionStatus)
+            subscriptionStatus: profile.subscriptionStatus,
+            pass: await loadEventPass())
+    }
+
+    /// The event's Event Pass, if the signed-in user owns one for it (a
+    /// Premium pass grants collaboration). Errors are non-fatal — collaboration
+    /// then falls back to the subscription entitlement alone.
+    private func loadEventPass() async -> EventPass? {
+        do {
+            let rows = try await supabase.select(
+                "event_passes",
+                query: [
+                    URLQueryItem(name: "select", value: EventPass.selectColumns),
+                    URLQueryItem(name: "event_id", value: "eq.\(event.id)"),
+                ],
+                as: [EventPass].self)
+            return rows.first
+        } catch {
+            return nil
+        }
     }
 
     private func loadShares() async throws -> [EventShareRecord] {

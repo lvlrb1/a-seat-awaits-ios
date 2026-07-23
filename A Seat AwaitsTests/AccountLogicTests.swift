@@ -32,7 +32,9 @@ import Foundation
     #expect(PlanTier.core.displayName == "Core")
     #expect(PlanTier.essentials.displayName == "Essentials")
     #expect(PlanTier.signature.displayName == "Signature")
-    #expect(PlanTier.elite.displayName == "Elite")
+    // July 2026 model: internal `elite` is marketed as "Pro" (never confuse
+    // with internal `pro`, the legacy Signature plan).
+    #expect(PlanTier.elite.displayName == "Pro")
 }
 
 // MARK: - Limits

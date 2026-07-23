@@ -22,11 +22,9 @@ struct CollaboratorsView: View {
     @State private var showEventPicker = false
     @State private var inviteContext: InviteContext?
     @State private var isPreparingInvite = false
+    @State private var isPresentingPaywall = false
 
-    @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
-
-    private static let subscriptionURL = URL(string: "https://aseatawaits.com/subscription")!
 
     init(supabase: SupabaseClient) {
         self.supabase = supabase
@@ -38,7 +36,7 @@ struct CollaboratorsView: View {
             LazyVStack(spacing: 14) {
                 if let overview = store.overview {
                     CollaboratorLimitsCard(overview: overview) {
-                        openURL(Self.subscriptionURL)
+                        isPresentingPaywall = true
                     }
                     byEventSection(overview)
                 } else if store.isLoading {
@@ -100,6 +98,11 @@ struct CollaboratorsView: View {
                 inviteContext = nil
                 Task { await store.load() }
             }
+        }
+        .sheet(isPresented: $isPresentingPaywall, onDismiss: {
+            Task { await store.load() }
+        }) {
+            PaywallView(supabase: supabase, appState: appState)
         }
         .overlay {
             if isPreparingInvite {
@@ -398,7 +401,7 @@ private struct CollaboratorLimitsCard: View {
                         .foregroundStyle(Brand.accent)
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Opens the subscription page in your browser")
+                .accessibilityHint("Shows the available plans")
             }
         }
         .padding(16)

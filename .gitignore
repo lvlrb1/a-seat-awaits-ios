@@ -27,3 +27,6 @@ A Seat Awaits/Secrets.plist
 # The committed *.example.plist templates document the expected shape.
 Config/Secrets.*.plist
 !Config/Secrets.*.example.plist
+
+# Supabase CLI local cache
+supabase/.temp/

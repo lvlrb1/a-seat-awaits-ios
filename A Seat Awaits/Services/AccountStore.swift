@@ -75,24 +75,28 @@ final class AccountStore {
 
         async let profileTask = fetchProfile(userId: authUser.id)
         async let subscriptionTask = fetchSubscription(userId: authUser.id)
-        let (profile, subscription) = await (profileTask, subscriptionTask)
+        async let passesTask = fetchPasses(userId: authUser.id)
+        let (profile, subscription, passes) = await (profileTask, subscriptionTask, passesTask)
 
         snapshot = AccountSnapshot(authUser: authUser,
                                    profile: profile,
-                                   subscription: subscription)
+                                   subscription: subscription,
+                                   passes: passes)
     }
 
     /// A lightweight refresh used when returning to the foreground: re-reads the
-    /// subscription and profile (the most likely to have changed after a billing
-    /// action on the web) without disrupting the screen on failure.
+    /// subscription, profile and passes (the most likely to have changed after a
+    /// billing action) without disrupting the screen on failure.
     func refreshBillingState() async {
         guard let authUser = snapshot?.authUser ?? appState.currentUser else { return }
         async let profileTask = fetchProfile(userId: authUser.id)
         async let subscriptionTask = fetchSubscription(userId: authUser.id)
-        let (profile, subscription) = await (profileTask, subscriptionTask)
+        async let passesTask = fetchPasses(userId: authUser.id)
+        let (profile, subscription, passes) = await (profileTask, subscriptionTask, passesTask)
         if var current = snapshot {
             if let profile { current.profile = profile }
             current.subscription = subscription
+            current.passes = passes
             snapshot = current
         }
     }
@@ -103,7 +107,7 @@ final class AccountStore {
                 "users",
                 query: [
                     URLQueryItem(name: "select",
-                                 value: "id,full_name,subscription_tier,subscription_status,created_at,updated_at"),
+                                 value: "id,full_name,subscription_tier,subscription_status,legacy_free,created_at,updated_at"),
                     URLQueryItem(name: "id", value: "eq.\(userId)"),
                 ],
                 as: [UserProfile].self)
@@ -111,6 +115,23 @@ final class AccountStore {
         } catch {
             loadErrorMessage = loadErrorMessage ?? Self.message(for: error)
             return nil
+        }
+    }
+
+    /// The user's Event Passes (RLS scopes rows to the purchaser), newest first.
+    private func fetchPasses(userId: String) async -> [EventPass] {
+        do {
+            return try await supabase.select(
+                "event_passes",
+                query: [
+                    URLQueryItem(name: "select", value: EventPass.selectColumns),
+                    URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+                    URLQueryItem(name: "order", value: "purchased_at.desc.nullslast"),
+                ],
+                as: [EventPass].self)
+        } catch {
+            // A user with no passes (or an older backend) is not an error.
+            return []
         }
     }
 

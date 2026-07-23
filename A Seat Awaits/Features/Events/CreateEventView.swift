@@ -11,6 +11,7 @@ import SwiftUI
 struct CreateEventView: View {
     let store: EventStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var appState
 
     @State private var name = ""
     @State private var hasDate = false
@@ -19,6 +20,7 @@ struct CreateEventView: View {
     @State private var description = ""
     @State private var isSaving = false
     @State private var showingDatePicker = false
+    @State private var showingPassPaywall = false
     @State private var errorMessage: String?
 
     private enum Field { case name, venue }
@@ -123,6 +125,11 @@ struct CreateEventView: View {
         .sheet(isPresented: $showingDatePicker) {
             datePickerSheet
         }
+        .sheet(isPresented: $showingPassPaywall) {
+            if let supabase = appState.supabase {
+                PaywallView(supabase: supabase, appState: appState)
+            }
+        }
     }
 
     private var datePickerSheet: some View {
@@ -158,7 +165,23 @@ struct CreateEventView: View {
             )
             dismiss()
         } catch {
-            errorMessage = FriendlyError.message(for: error)
+            // The database's entitlement trigger is the authoritative gate:
+            // no unattached pass, entitled subscription, or grandfathered
+            // flag → the insert is rejected and we sell a pass instead.
+            if Self.isPassRequired(error) {
+                errorMessage = "An Event Pass is required to create your event."
+                showingPassPaywall = true
+            } else {
+                errorMessage = FriendlyError.message(for: error)
+            }
         }
+    }
+
+    /// True when the failure is the DB trigger's EVENT_PASS_REQUIRED rejection.
+    private static func isPassRequired(_ error: Error) -> Bool {
+        if case SupabaseError.http(_, let message) = error {
+            return message.contains("EVENT_PASS_REQUIRED")
+        }
+        return String(describing: error).contains("EVENT_PASS_REQUIRED")
     }
 }
