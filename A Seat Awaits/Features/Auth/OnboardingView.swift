@@ -4,7 +4,7 @@
 //
 //  Splash / welcome → account creation / sign-in, wired to live Supabase auth.
 //  Mirrors design Section 01: hero splash with a glass logo tile and
-//  "Start for free" / "Log in", then the email form with "Continue with Apple".
+//  "Get started" / "Log in", then the email form with "Continue with Apple".
 //
 
 import SwiftUI
@@ -96,7 +96,7 @@ struct OnboardingView: View {
                 Spacer()
 
                 VStack(spacing: 0) {
-                    Button("Start for free") {
+                    Button("Get started") {
                         model.mode = .signUp
                         stage = .form
                     }
@@ -115,14 +115,10 @@ struct OnboardingView: View {
                             .strokeBorder(.white.opacity(0.25), lineWidth: 1)
                     )
                     .padding(.top, 12)
-
-                    Text("14-day free trial")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .padding(.top, 18)
                 }
                 .padding(.horizontal, 28)
                 .padding(.bottom, 44)
+                .readableWidth(Layout.formWidth)
             }
         }
     }
@@ -218,7 +214,7 @@ struct OnboardingView: View {
                     } label: {
                         HStack(spacing: 8) {
                             if model.isSubmitting { ProgressView().tint(.white) }
-                            Text(isSignUp ? "Start for free" : "Log in")
+                            Text(isSignUp ? "Create account" : "Log in")
                         }
                     }
                     .buttonStyle(.primaryBrand)
@@ -257,7 +253,7 @@ struct OnboardingView: View {
                     HStack(spacing: 5) {
                         Text(isSignUp ? "Already have an account?" : "New here?")
                             .foregroundStyle(Brand.textSecondary)
-                        Button(isSignUp ? "Log in" : "Start for free") {
+                        Button(isSignUp ? "Log in" : "Sign up") {
                             focusedField = nil
                             showPassword = false
                             model.toggleMode()
@@ -272,6 +268,7 @@ struct OnboardingView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
+                .readableWidth(Layout.formWidth)
             }
             .background(Brand.canvas)
             .scrollDismissesKeyboard(.interactively)
