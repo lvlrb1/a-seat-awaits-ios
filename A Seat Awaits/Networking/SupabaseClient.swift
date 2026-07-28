@@ -100,23 +100,6 @@ actor SupabaseClient {
         return session.user
     }
 
-    /// Exchanges an Apple identity token for a Supabase session. Requires the
-    /// Apple provider to be enabled on the Supabase project and the "Sign in
-    /// with Apple" capability on the app target.
-    func signInWithApple(idToken: String, nonce: String, fullName: String?) async throws -> AuthUser {
-        struct Body: Encodable {
-            let provider = "apple"
-            let id_token: String
-            let nonce: String
-        }
-        let data = try await authRequest(path: "token",
-                                         query: [URLQueryItem(name: "grant_type", value: "id_token")],
-                                         body: Body(id_token: idToken, nonce: nonce))
-        let session = try decode(AuthSession.self, from: data)
-        setSession(session)
-        return session.user
-    }
-
     func sendPasswordReset(email: String) async throws {
         struct Body: Encodable { let email: String }
         _ = try await authRequest(path: "recover", body: Body(email: email))

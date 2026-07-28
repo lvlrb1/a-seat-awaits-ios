@@ -5,8 +5,6 @@
 
 import Foundation
 import Observation
-import AuthenticationServices
-import CryptoKit
 
 @MainActor
 @Observable
@@ -79,6 +77,13 @@ final class AuthViewModel {
                 )
                 switch result {
                 case .signedIn(let user):
+                    // Auto-confirmed signup: ensure the new user's one-time
+                    // sample event exists before entering the app, so the
+                    // first dashboard load already shows it. Web signups get
+                    // theirs from the verification landing page; the native
+                    // app never touches that path. Best-effort — a failure
+                    // here must never block signup.
+                    await provisionSampleEvent()
                     onAuthenticated(user)
                 case .confirmationRequired:
                     // Drive the deliberate (edge + Resend) verification path,
@@ -98,64 +103,22 @@ final class AuthViewModel {
         }
     }
 
-    // MARK: - Sign in with Apple
+    // MARK: - Sample event
 
-    /// A fresh raw nonce per attempt; Apple receives its SHA256, Supabase the raw value.
-    private var currentNonce: String?
-
-    /// Configures the Apple authorization request with scopes and a hashed nonce.
-    func configureAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
-        let nonce = Self.randomNonce()
-        currentNonce = nonce
-        request.requestedScopes = [.fullName, .email]
-        request.nonce = Self.sha256(nonce)
+    private nonisolated struct ProvisionSampleBody: Encodable, Sendable {}
+    private nonisolated struct ProvisionSampleResponse: Decodable, Sendable {
+        let ok: Bool
+        let eventId: String?
     }
 
-    func handleAppleCompletion(_ result: Result<ASAuthorization, Error>) async {
-        switch result {
-        case .failure(let error):
-            // User cancellation shouldn't read as an error.
-            if (error as? ASAuthorizationError)?.code == .canceled { return }
-            errorMessage = error.localizedDescription
-        case .success(let auth):
-            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
-                  let tokenData = credential.identityToken,
-                  let idToken = String(data: tokenData, encoding: .utf8),
-                  let nonce = currentNonce else {
-                errorMessage = "Apple sign-in did not return a valid token."
-                return
-            }
-            let name = [credential.fullName?.givenName, credential.fullName?.familyName]
-                .compactMap { $0 }.joined(separator: " ")
-            isSubmitting = true
-            defer { isSubmitting = false }
-            do {
-                let user = try await supabase.signInWithApple(idToken: idToken, nonce: nonce,
-                                                              fullName: name.isEmpty ? nil : name)
-                onAuthenticated(user)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    private static func randomNonce(length: Int = 32) -> String {
-        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
-        var result = ""
-        var remaining = length
-        while remaining > 0 {
-            var random: UInt8 = 0
-            _ = SecRandomCopyBytes(kSecRandomDefault, 1, &random)
-            if random < charset.count * Int(UInt8.max / UInt8(charset.count)) {
-                result.append(charset[Int(random) % charset.count])
-                remaining -= 1
-            }
-        }
-        return result
-    }
-
-    private static func sha256(_ input: String) -> String {
-        SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
+    /// Asks the `provision-sample-event` Edge Function for the caller's
+    /// one-time sample event (idempotent server-side; see the function for the
+    /// contract). Errors are swallowed: the sample is a nice-to-have and the
+    /// dashboard works without it.
+    private func provisionSampleEvent() async {
+        _ = try? await supabase.invokeFunction("provision-sample-event",
+                                               body: ProvisionSampleBody(),
+                                               as: ProvisionSampleResponse.self)
     }
 
     /// Prepares the reset sheet: pre-fills the email already typed on the form

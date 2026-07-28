@@ -4,11 +4,10 @@
 //
 //  Splash / welcome → account creation / sign-in, wired to live Supabase auth.
 //  Mirrors design Section 01: hero splash with a glass logo tile and
-//  "Get started" / "Log in", then the email form with "Continue with Apple".
+//  "Get started" / "Log in", then the email form.
 //
 
 import SwiftUI
-import AuthenticationServices
 
 struct OnboardingView: View {
     @Environment(AppState.self) private var appState
@@ -231,24 +230,6 @@ struct OnboardingView: View {
                             .padding(.top, 14)
                     }
 
-                    // "or" divider
-                    dividerOr
-                        .padding(.vertical, 22)
-
-                    // Apple — white/outlined per spec.
-                    SignInWithAppleButton(.continue) { request in
-                        model.configureAppleRequest(request)
-                    } onCompletion: { result in
-                        Task { await model.handleAppleCompletion(result) }
-                    }
-                    .signInWithAppleButtonStyle(.whiteOutline)
-                    .frame(height: 54)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Brand.fieldBorder, lineWidth: 1.5)
-                    )
-
                     // Footer link
                     HStack(spacing: 5) {
                         Text(isSignUp ? "Already have an account?" : "New here?")
@@ -370,13 +351,4 @@ struct OnboardingView: View {
                     radius: shadow ? 14 : 0, x: 0, y: shadow ? 12 : 0)
     }
 
-    private var dividerOr: some View {
-        HStack(spacing: 14) {
-            Rectangle().fill(Brand.separator).frame(height: 1)
-            Text("or")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Brand.slate400)
-            Rectangle().fill(Brand.separator).frame(height: 1)
-        }
-    }
 }
