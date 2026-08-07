@@ -71,6 +71,7 @@ struct FloorPlanView: View {
     @State private var editingRoom: FloorPlanRoom?
     @State private var showingAddRoom = false
     @State private var showingTemplates = false
+    @State private var showingImportPlan = false
     /// Opt-in snap to the 2ft grid; gentle alignment guides are always on.
     @State private var snapToGrid = false
     /// Ensures the layout is auto-framed only once, on first canvas appearance.
@@ -182,6 +183,7 @@ struct FloorPlanView: View {
         }
         .sheet(isPresented: $showingAddRoom) { AddRoomView(store: store) }
         .sheet(isPresented: $showingTemplates) { TemplatesView(store: store) }
+        .sheet(isPresented: $showingImportPlan) { ImportFloorPlanView(store: store) }
         .sensoryFeedback(.error, trigger: errorTick)
         .onAppear { pulse = true }
         // Selection only makes sense on an editable canvas — clear it when the
@@ -213,6 +215,13 @@ struct FloorPlanView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Brand.primaryFill)
+
+                Button { showingImportPlan = true } label: {
+                    Label("Import your venue's floor plan", systemImage: "wand.and.stars")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Brand.accent)
+                }
+                .buttonStyle(.plain)
 
                 Button { showingTemplates = true } label: {
                     Text("Start from a template")
@@ -1033,6 +1042,7 @@ struct FloorPlanView: View {
             Button { showingAddShape = true } label: { Label("Shape", systemImage: "square.on.circle") }
             Button { showingAddRoom = true } label: { Label("Room", systemImage: "square.dashed") }
             Divider()
+            Button { showingImportPlan = true } label: { Label("Import Plan…", systemImage: "wand.and.stars") }
             Button { showingTemplates = true } label: { Label("Templates…", systemImage: "square.grid.3x3.square") }
         } label: {
             HStack(spacing: 8) {

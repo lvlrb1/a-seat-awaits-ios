@@ -987,6 +987,83 @@ final class SeatingStore {
         }
     }
 
+    // MARK: - AI floor plan import
+
+    /// Sends an uploaded floor plan (photo/scan/PDF) through the
+    /// `ai-import-floorplan` Edge Function — the same consensus vision pipeline
+    /// as the web — and returns the canvas-ready plan for review. Throws on
+    /// plan/rate-limit/AI failure or transport error (no on-device fallback).
+    func aiAnalyzeFloorPlan(fileData: Data, filename: String,
+                            contentType: String) async throws -> AiFloorplanImportResponse {
+        let service = FloorPlanImportService(invoker: supabase)
+        let response = try await service.analyze(eventId: event.id, fileData: fileData,
+                                                 filename: filename, contentType: contentType)
+        markReachable()
+        return response
+    }
+
+    /// Applies a reviewed AI import: creates the room (when the plan had a
+    /// measurable scale) to the RIGHT of any existing rooms — additive, never
+    /// burying what's already on the canvas — then bulk-inserts fixtures and
+    /// tables offset into it. Mirrors the web's apply handler, including
+    /// continuing "Table N" numbering after existing tables.
+    func applyImportedFloorPlan(_ plan: ImportedFloorPlan) async throws {
+        // Place the import to the right of every existing room.
+        let roomGapPoints: Double = 48
+        let offsetX = rooms.reduce(0.0) { edge, room in
+            max(edge, room.positionX + room.widthPoints + roomGapPoints)
+        }
+        let offsetY: Double = 0
+
+        if let planRoom = plan.room {
+            let sortOrder = rooms.compactMap(\.sortOrder).max().map { $0 + 1 }
+            let inserted = try await supabase.insert(
+                "floorplan_rooms",
+                values: NewRoomDTO(event_id: event.id, name: planRoom.name,
+                                   width_ft: planRoom.widthFt, height_ft: planRoom.heightFt,
+                                   position_x: offsetX, position_y: offsetY,
+                                   color: nil, sort_order: sortOrder),
+                returning: [FloorPlanRoom].self
+            )
+            if let room = inserted.first { rooms.append(room) }
+        }
+
+        if !plan.shapes.isEmpty {
+            let dtos = plan.shapes.map { s in
+                NewShapeDTO(event_id: event.id, name: s.name, type: s.type,
+                            width: s.width, height: s.height,
+                            position_x: s.positionX + offsetX,
+                            position_y: s.positionY + offsetY,
+                            rotation: s.rotation)
+            }
+            let inserted = try await supabase.insert("shapes", values: dtos,
+                                                     returning: [DecorShape].self)
+            shapes.append(contentsOf: inserted)
+        }
+
+        if !plan.tables.isEmpty {
+            // Continue "Table N" numbering after existing tables; uniqueName
+            // stays as the final guard for non-generic collisions ("Head Table").
+            let renumbered = FloorPlanImportNaming.renumber(plan.tables,
+                                                            after: tables.map(\.name))
+            var existingNames = Set(tables.map(\.name))
+            let dtos = renumbered.map { t in
+                let name = FloorPlanImportNaming.uniqueName(t.name, existing: existingNames)
+                existingNames.insert(name)
+                return NewTableDTO(event_id: event.id, name: name, shape: t.shape,
+                                   capacity: t.capacity, width: t.width, height: t.height,
+                                   position_x: t.positionX + offsetX,
+                                   position_y: t.positionY + offsetY,
+                                   rotation: t.rotation,
+                                   is_custom: t.isCustom)
+            }
+            let inserted = try await supabase.insert("tables", values: dtos,
+                                                     returning: [SeatingTable].self)
+            tables.append(contentsOf: inserted)
+        }
+        markReachable()
+    }
+
     // MARK: - Templates (per-user, reusable layouts)
 
     /// Loads the signed-in user's saved templates, newest first. Non-fatal.
