@@ -25,9 +25,17 @@ nonisolated struct EventPass: Codable, Identifiable, Equatable, Sendable {
     var purchasedAt: String?
     var refundedAt: String?
     var aiImportsUsed: Int
+    /// The attached event, when fetched with `selectColumnsWithEvent`. Nil on
+    /// unattached passes and on queries that don't embed the event.
+    var event: AttachedEvent? = nil
+
+    /// The bare columns an embedded `events` row carries for display.
+    nonisolated struct AttachedEvent: Codable, Equatable, Sendable {
+        var name: String?
+    }
 
     enum CodingKeys: String, CodingKey {
-        case id, tier, currency, provider
+        case id, tier, currency, provider, event
         case eventId = "event_id"
         case userId = "user_id"
         case guestCap = "guest_cap"
@@ -41,6 +49,10 @@ nonisolated struct EventPass: Codable, Identifiable, Equatable, Sendable {
     static let selectColumns =
         "id,event_id,user_id,tier,guest_cap,amount_paid_cents,currency,provider,purchased_at,refunded_at,ai_imports_used"
 
+    /// `selectColumns` plus the attached event's name (to-one embed over the
+    /// `event_id` FK), so the billing screen can say which event a pass covers.
+    static let selectColumnsWithEvent = selectColumns + ",event:events(name)"
+
     /// Passes never expire; only a refund revokes one.
     var isActive: Bool { refundedAt == nil }
 
@@ -49,6 +61,9 @@ nonisolated struct EventPass: Codable, Identifiable, Equatable, Sendable {
     var passTier: PassTier? { PassTier.normalize(tier) }
 
     var tierDisplayName: String { passTier?.displayName ?? tier.capitalized }
+
+    /// The attached event's name, when known (requires `selectColumnsWithEvent`).
+    var attachedEventName: String? { event?.name?.nilIfBlank }
 
     /// Lifetime AI-import cap for this pass's tier (0 = tier has no AI import).
     var aiImportCap: Int { passTier?.aiImportLifetimeCap ?? 0 }
@@ -97,5 +112,14 @@ nonisolated struct EventEntitlement: Sendable, Equatable {
 
     var maxCollaboratorsPerEvent: Int {
         max(passTier?.maxCollaboratorsPerEvent ?? 0, subscriptionLimits.maxCollaboratorsPerEvent)
+    }
+
+    /// What grants the binding guest cap, for limit copy — e.g. "the Standard
+    /// Pass" or "the Free plan" (mirrors the web's `limitLabel`).
+    var guestCapSourceLabel: String {
+        if let pass, pass.guestCap >= subscriptionLimits.maxGuestsPerEvent {
+            return "the \(pass.tierDisplayName)"
+        }
+        return "the \(policy.effectiveTier.displayName) plan"
     }
 }

@@ -117,13 +117,14 @@ nonisolated struct TemplateRoom: Codable, Sendable {
     }
 
     /// Captures a live room as a template entry (drops id + event scoping).
+    /// Color is intentionally dropped — room tints are no longer a setting.
     init(room: FloorPlanRoom) {
         self.init(name: room.name,
                   widthFt: room.widthFt,
                   heightFt: room.heightFt,
                   positionX: room.positionX,
                   positionY: room.positionY,
-                  color: room.color,
+                  color: nil,
                   sortOrder: room.sortOrder ?? 0)
     }
 }

@@ -88,6 +88,7 @@ struct EmailVerificationView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 28)
             .padding(.bottom, 24)
+            .readableWidth(Layout.formWidth)
         }
         .background(Brand.canvas)
     }

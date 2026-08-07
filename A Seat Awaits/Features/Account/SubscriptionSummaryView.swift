@@ -10,6 +10,13 @@
 //  non-tappable text (no external purchase links — App Review guideline 3.1.1).
 //  Upgrades and new subscriptions go through the native StoreKit paywall.
 //
+//  Three account shapes, mirroring the web /subscription page:
+//  - Paid subscriber: plan card + status + dates + plan features.
+//  - Legacy Free (users.legacy_free): grandfathered early members who keep the
+//    old Free plan (1 event, 25 guests) — shown with a thank-you note.
+//  - Everyone else: there is no free plan. They buy one-time Event Passes per
+//    event (or go Pro) and always have collaborator access to shared events.
+//
 
 import StoreKit
 import SwiftUI
@@ -27,26 +34,50 @@ struct SubscriptionSummaryView: View {
     private var subscription: SubscriptionRow? { snapshot?.subscription }
     private var provider: BillingProvider { snapshot?.billingProvider ?? .none }
 
+    /// Which of the three account shapes this screen is describing.
+    private enum Presentation { case paid, legacyFree, payPerEvent }
+
+    private var presentation: Presentation {
+        if !policy.isFree { return .paid }
+        return snapshot?.isLegacyFree == true ? .legacyFree : .payPerEvent
+    }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                planCard
-                if policy.isAccessReducedByStatus || policy.status.hasPaymentIssue {
-                    paymentWarning
+            if snapshot == nil {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 80)
+            } else {
+                VStack(spacing: 16) {
+                    switch presentation {
+                    case .paid:
+                        paidPlanCard
+                        if policy.isAccessReducedByStatus || policy.status.hasPaymentIssue {
+                            paymentWarning
+                        }
+                        datesCard
+                        passesCard
+                        featuresCard
+                        billingActionsCard
+                        if !policy.isTopTier && snapshot?.hasActiveStripeBilling != true {
+                            upgradeCard
+                        }
+                        disclaimer
+                    case .legacyFree:
+                        legacyFreeCard
+                        passesCard
+                        featuresCard
+                        upgradeCard
+                    case .payPerEvent:
+                        payPerEventCard
+                        passesCard
+                        howPassesWorkCard
+                    }
                 }
-                datesCard
-                if !(snapshot?.passes.isEmpty ?? true) {
-                    passesCard
-                }
-                featuresCard
-                billingActionsCard
-                if !policy.isTopTier && snapshot?.hasActiveStripeBilling != true {
-                    upgradeCard
-                }
-                disclaimer
+                .padding(18)
+                .readableWidth(Layout.contentWidth)
             }
-            .padding(18)
-            .readableWidth(Layout.contentWidth)
         }
         .background(Brand.canvas.ignoresSafeArea())
         .scrollIndicators(.hidden)
@@ -75,9 +106,9 @@ struct SubscriptionSummaryView: View {
         }
     }
 
-    // MARK: - Plan header
+    // MARK: - Plan header (paid subscriber)
 
-    private var planCard: some View {
+    private var paidPlanCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -90,9 +121,7 @@ struct SubscriptionSummaryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                if subscription != nil || !policy.isFree {
-                    StatusBadge(status: policy.status)
-                }
+                StatusBadge(status: policy.status)
             }
 
             if subscription?.isCanceling == true {
@@ -100,6 +129,53 @@ struct SubscriptionSummaryView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Brand.warningText)
             }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .brandCard()
+    }
+
+    // MARK: - Plan header (legacy Free)
+
+    /// Grandfathered early members keep the old Free plan. This is the only
+    /// account shape that still has a "Free plan" — say so warmly and clearly.
+    private var legacyFreeCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                Text("Free plan")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+                Spacer()
+                pill("EARLY MEMBER")
+            }
+            Text("As a thank-you for being an early member, your Free plan is yours to keep at no cost — 1 event with up to 25 guests.")
+                .font(.system(size: 14))
+                .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .brandCard()
+    }
+
+    // MARK: - Plan header (pay per event)
+
+    /// No subscription and not grandfathered: the account has no plan of its
+    /// own. Events are paid for one at a time with Event Passes.
+    private var payPerEventCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                Text("Pay as you go")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+                Spacer()
+            }
+            Text("No subscription needed. Buy a one-time Event Pass for each event you plan — or go Pro if you plan events for a living.")
+                .font(.system(size: 14))
+                .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("View Passes & Pro") { isPresentingPaywall = true }
+                .buttonStyle(.secondaryOutline)
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -114,7 +190,7 @@ struct SubscriptionSummaryView: View {
         if policy.status.hasPaymentIssue {
             return "There's a problem with your payment (\(policy.status.displayName.lowercased())). Resolve it to keep your plan's features."
         }
-        return "Your \(policy.planDisplayName) plan isn't active right now, so Free limits apply."
+        return "Your \(policy.planDisplayName) plan isn't active right now, so its features are paused."
     }
 
     // MARK: - Dates
@@ -163,58 +239,107 @@ struct SubscriptionSummaryView: View {
 
     // MARK: - Event Passes
 
-    /// The user's Event Passes: attached passes cover their event for life;
-    /// unattached ones are spent automatically on the next event created.
+    /// One row per owned pass, each telling its own story: which event it
+    /// covers, or that it's waiting for the next event the user creates.
+    @ViewBuilder
     private var passesCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Event Passes")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(Brand.textPrimary)
+        if let passes = snapshot?.passes, !passes.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Your passes")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
 
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(snapshot?.passes ?? []) { pass in
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "ticket")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(pass.isActive ? Brand.accent : Brand.slate300)
-                            .frame(width: 20)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(pass.tierDisplayName)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(Brand.textPrimary)
-                            Text(passSubtitle(pass))
-                                .font(.system(size: 12))
-                                .foregroundStyle(Brand.textSecondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(passes.enumerated()), id: \.element.id) { index, pass in
+                        if index > 0 {
+                            Divider().padding(.vertical, 10)
                         }
-                        Spacer(minLength: 0)
-                        Text(pass.isActive ? (pass.isAttached ? "In use" : "Ready") : "Refunded")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(pass.isActive ? Brand.success : Brand.danger)
+                        passRow(pass)
                     }
                 }
-            }
 
-            Text("A pass never expires — it covers one event for good.")
-                .font(.system(size: 12))
-                .foregroundStyle(Brand.slate400)
+                Text("A pass never expires — it covers one event for good.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.slate400)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .brandCard()
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .brandCard()
     }
 
-    private func passSubtitle(_ pass: EventPass) -> String {
-        var parts: [String] = ["Up to \(pass.guestCap.formatted()) guests"]
-        if !pass.isAttached && pass.isActive {
-            parts.append("attaches to your next event")
+    private func passRow(_ pass: EventPass) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "ticket")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(pass.isActive ? Brand.accent : Brand.slate300)
+                .frame(width: 20)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(pass.tierDisplayName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Brand.textPrimary)
+                Text(passStatusLine(pass))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Brand.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(passDetailLine(pass))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.slate400)
+            }
+            Spacer(minLength: 8)
+            passBadge(pass)
         }
+    }
+
+    /// The one sentence that explains this pass's state in plain words.
+    private func passStatusLine(_ pass: EventPass) -> String {
+        guard pass.isActive else {
+            return "Refunded — no longer covers an event."
+        }
+        if pass.isAttached {
+            if let name = pass.attachedEventName {
+                return "Covering “\(name)”."
+            }
+            return "Covering one of your events."
+        }
+        return "Attaches automatically to the next event you create."
+    }
+
+    private func passDetailLine(_ pass: EventPass) -> String {
+        var parts: [String] = ["Up to \(pass.guestCap.formatted()) guests"]
         if let purchased = AccountDate.medium(pass.purchasedAt) {
             parts.append("purchased \(purchased)")
         }
         return parts.joined(separator: " · ")
     }
 
-    // MARK: - Features / limits
+    @ViewBuilder
+    private func passBadge(_ pass: EventPass) -> some View {
+        if pass.isActive {
+            if pass.isAttached {
+                pill("IN USE", fg: Brand.accent, bg: Brand.accent.opacity(0.12))
+            } else {
+                pill("READY", fg: Brand.successText, bg: Brand.successFill)
+            }
+        } else {
+            pill("REFUNDED")
+        }
+    }
+
+    private func pill(_ text: String,
+                      fg: Color = Brand.textSecondary,
+                      bg: Color = Brand.control) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .heavy))
+            .tracking(0.5)
+            .foregroundStyle(fg)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(bg, in: Capsule())
+    }
+
+    // MARK: - Features / limits (paid + legacy Free)
 
     private var featuresCard: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -240,6 +365,13 @@ struct SubscriptionSummaryView: View {
                 }
             }
 
+            if presentation == .paid || presentation == .legacyFree,
+               !(snapshot?.activePasses.isEmpty ?? true) {
+                Text("Events covered by an Event Pass get that pass's limits on top of your plan.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.slate400)
+            }
+
             if policy.isAccessReducedByStatus {
                 Text("Free limits apply until your subscription is active again.")
                     .font(.system(size: 13))
@@ -249,6 +381,45 @@ struct SubscriptionSummaryView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .brandCard()
+    }
+
+    // MARK: - How passes work (pay per event)
+
+    /// Replaces the plan-features checklist for accounts that have no plan:
+    /// three plain sentences that explain the whole model.
+    private var howPassesWorkCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("How it works")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Brand.textPrimary)
+
+            VStack(alignment: .leading, spacing: 12) {
+                howItWorksRow(icon: "ticket",
+                              text: "One pass covers one event, from an intimate dinner to a 500-guest wedding. It never expires.")
+                howItWorksRow(icon: "calendar.badge.plus",
+                              text: "A Ready pass attaches automatically to the next event you create — no extra step.")
+                howItWorksRow(icon: "person.2",
+                              text: "Events shared with you are always free to join as a collaborator.")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .brandCard()
+    }
+
+    private func howItWorksRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Brand.accent)
+                .frame(width: 20)
+                .padding(.top, 1)
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(Brand.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     // MARK: - Billing actions
@@ -297,12 +468,15 @@ struct SubscriptionSummaryView: View {
 
     private var upgradeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(policy.isFree ? "Plan your event" : "Compare options")
+            Text(policy.isFree ? "Plan a bigger event" : "Compare options")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(Brand.textPrimary)
-            Text("Buy a one-time Event Pass, or go Pro if you plan events for a living.")
+            Text(policy.isFree
+                 ? "Want more guests, AI import, or collaboration? Pick up a one-time Event Pass, or go Pro if you plan events for a living."
+                 : "Buy a one-time Event Pass, or go Pro if you plan events for a living.")
                 .font(.system(size: 13))
                 .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             Button("View Passes & Pro") { isPresentingPaywall = true }
                 .buttonStyle(.secondaryOutline)
         }

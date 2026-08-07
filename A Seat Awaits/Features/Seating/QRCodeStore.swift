@@ -19,16 +19,6 @@ private nonisolated struct EventTokenPatch: Encodable, Sendable {
     let qr_code_token: String
 }
 
-/// PATCH payload that clears the token (sets it to SQL NULL), disabling the
-/// public guest lookup entirely (F15).
-private nonisolated struct EventTokenClearPatch: Encodable, Sendable {
-    func encode(to encoder: Encoder) throws {
-        enum K: String, CodingKey { case qr_code_token }
-        var c = encoder.container(keyedBy: K.self)
-        try c.encodeNil(forKey: .qr_code_token)
-    }
-}
-
 @MainActor
 @Observable
 final class QRCodeStore {
@@ -158,59 +148,6 @@ final class QRCodeStore {
                                      message: "The guest link couldn't be saved for this event.")
         }
         return saved
-    }
-
-    // MARK: - Rotate / disable the public link (owner only, F15)
-
-    /// Mints a brand-new token, invalidating every previously shared code/QR, and
-    /// re-renders. Owner-only; the UI gates this behind a confirmation.
-    func regenerateLink() async {
-        guard isOwner else { return }
-        guard let candidate = SecureToken.generate() else {
-            phase = .failed("Couldn't create a secure guest link. Please try again.")
-            return
-        }
-        phase = .loading
-        do {
-            token = try await persistToken(candidate)
-        } catch {
-            phase = .failed(Self.message(error,
-                fallback: "Couldn't regenerate the guest link. Please try again."))
-            return
-        }
-        guard let token, let url = GuestLookupURL.make(base: baseURL, token: token) else {
-            phase = .failed("Couldn't build the guest link.")
-            return
-        }
-        shareURL = url
-        await renderQR(for: url)
-        announce("New guest link created. Previously shared codes no longer work.")
-    }
-
-    /// Disables the public guest lookup by clearing the token. Existing codes/QRs
-    /// stop resolving. Owner-only; the UI gates this behind a confirmation.
-    func disableLink() async {
-        guard isOwner, let ownerFilter = currentUserID else { return }
-        phase = .loading
-        do {
-            _ = try await supabase.update(
-                "events",
-                values: EventTokenClearPatch(),
-                query: [URLQueryItem(name: "id", value: "eq.\(eventID)"),
-                        URLQueryItem(name: "owner_id", value: "eq.\(ownerFilter)")],
-                returning: [EmptyRow].self)
-        } catch {
-            phase = .failed(Self.message(error,
-                fallback: "Couldn't disable the guest link. Please try again."))
-            return
-        }
-        token = nil
-        shareURL = nil
-        #if canImport(UIKit)
-        qrImage = nil
-        #endif
-        phase = .disabled
-        announce("Guest lookup disabled. Existing codes no longer work.")
     }
 
     // MARK: - Copy / share

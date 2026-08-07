@@ -91,7 +91,9 @@ final class EventCollaboratorsStore {
             policy = try await loadPolicy(userId: userId)
             shares = try await loadShares()
             invites = try await loadPendingInvitations(userId: userId)
-            resolvedNames = try await resolveNames()
+            // Best-effort: a failed name lookup shouldn't take down the whole
+            // screen — rows fall back to showing emails.
+            resolvedNames = (try? await resolveNames()) ?? [:]
             rebuild()
         } catch {
             errorMessage = CollaboratorsStore.message(for: error)

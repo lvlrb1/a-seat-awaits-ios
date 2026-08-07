@@ -124,7 +124,7 @@ final class AccountStore {
             return try await supabase.select(
                 "event_passes",
                 query: [
-                    URLQueryItem(name: "select", value: EventPass.selectColumns),
+                    URLQueryItem(name: "select", value: EventPass.selectColumnsWithEvent),
                     URLQueryItem(name: "user_id", value: "eq.\(userId)"),
                     URLQueryItem(name: "order", value: "purchased_at.desc.nullslast"),
                 ],

@@ -44,6 +44,17 @@ struct EventListView: View {
         }
     }
 
+    /// Passes offered in the create sheet, oldest first (the first one is
+    /// what the DB trigger claims by default). Empty for entitled paid
+    /// subscribers: their plan covers new events by itself, so the sheet
+    /// must not advertise spending a pass on top of it.
+    private var passesForCreateSheet: [EventPass] {
+        guard let snapshot = account?.snapshot else { return [] }
+        if snapshot.policy.isEntitled && !snapshot.policy.isFree { return [] }
+        return snapshot.unattachedActivePasses
+            .sorted { ($0.purchasedAt ?? "") < ($1.purchasedAt ?? "") }
+    }
+
     // MARK: Derived data
 
     private var firstName: String {
@@ -118,7 +129,7 @@ struct EventListView: View {
                 // Creating an event may have consumed an unattached pass.
                 Task { await account?.refreshBillingState() }
             }) {
-                CreateEventView(store: store)
+                CreateEventView(store: store, unattachedPasses: passesForCreateSheet)
             }
             .sheet(isPresented: $showingPassPaywall, onDismiss: {
                 Task { await account?.refreshBillingState() }
@@ -145,14 +156,22 @@ struct EventListView: View {
             }
             .refreshable { await store.loadDashboard(myEmail: appState.currentUser?.email) }
             .task {
+                // Load the dashboard and the entitlement gate concurrently —
+                // loading the gate last left a multi-second window where a
+                // passless Create Event tap fell open to the create form
+                // instead of the paywall.
+                let gate: AccountStore
+                if let existing = account {
+                    gate = existing
+                } else {
+                    gate = AccountStore(supabase: supabase, appState: appState)
+                    account = gate
+                }
+                async let gateLoad: Void = gate.snapshot == nil ? gate.load() : ()
                 if store.events.isEmpty {
                     await store.loadDashboard(myEmail: appState.currentUser?.email)
                 }
-                if account == nil {
-                    let gate = AccountStore(supabase: supabase, appState: appState)
-                    account = gate
-                    await gate.load()
-                }
+                _ = await gateLoad
             }
             .alert("Something went wrong",
                    isPresented: Binding(get: { store.errorMessage != nil },
@@ -178,6 +197,12 @@ struct EventListView: View {
             if store.isLoading && store.events.isEmpty {
                 ProgressView("Loading events…")
                     .frame(maxWidth: .infinity, minHeight: 200)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            } else if store.events.isEmpty && store.loadFailed {
+                // A failed load must not masquerade as "no events yet" — that
+                // hides the sample event and funnels straight into the paywall.
+                loadFailedState
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             } else if store.events.isEmpty {
@@ -307,6 +332,21 @@ struct EventListView: View {
         }
         .frame(minHeight: 340)
     }
+
+    private var loadFailedState: some View {
+        ContentUnavailableView {
+            Label("Couldn't load your events", systemImage: "wifi.exclamationmark")
+        } description: {
+            Text("Check your connection and try again.")
+        } actions: {
+            Button("Retry") {
+                Task { await store.loadDashboard(myEmail: appState.currentUser?.email) }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Brand.plum)
+        }
+        .frame(minHeight: 340)
+    }
 }
 
 // MARK: - List row styling for cards
@@ -366,8 +406,10 @@ private struct InviteCard: View {
                     .frame(height: 34)
                     .background(Brand.warningText, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     // Visual pill stays 34pt; hit target meets 44pt (A11y-5).
-                    .contentShape(Rectangle())
+                    // Frame first, then contentShape — the shape must capture
+                    // the expanded bounds, not the 34pt pill.
                     .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(isAccepting)

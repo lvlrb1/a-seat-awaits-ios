@@ -103,10 +103,10 @@ struct ManageAccountView: View {
                         ProgressView()
                     } else {
                         HStack(spacing: 8) {
-                            Text("\(policy.planDisplayName) plan")
+                            Text(planTitle)
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundStyle(Brand.textPrimary)
-                            if snapshot?.subscription != nil || !policy.isFree {
+                            if !policy.isFree {
                                 StatusBadge(status: policy.status)
                             }
                         }
@@ -134,9 +134,26 @@ struct ManageAccountView: View {
         .padding(.bottom, -36)
     }
 
+    /// "Pay as you go" for accounts with no plan of their own (not paid, not
+    /// grandfathered legacy Free) — those users buy per-event passes instead.
+    private var planTitle: String {
+        if policy.isFree && snapshot?.isLegacyFree != true {
+            return "Pay as you go"
+        }
+        return "\(policy.planDisplayName) plan"
+    }
+
     private var planSubtitle: String {
         if policy.isAccessReducedByStatus {
             return "Access limited — resolve billing to restore your plan"
+        }
+        if policy.isFree, snapshot?.isLegacyFree != true {
+            let ready = snapshot?.unattachedActivePasses.count ?? 0
+            switch ready {
+            case 0: return "Event Passes & Pro"
+            case 1: return "1 Event Pass ready for your next event"
+            default: return "\(ready) Event Passes ready to use"
+            }
         }
         let limits = policy.limits
         return "\(limits.eventsText) · \(limits.guestsText)"

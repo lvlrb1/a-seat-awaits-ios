@@ -13,6 +13,8 @@ enum GuestSort: String, CaseIterable, Identifiable {
     case firstNameAZ
     case group
     case unassignedFirst
+    case newestAdded
+    case oldestAdded
 
     var id: String { rawValue }
 
@@ -22,6 +24,8 @@ enum GuestSort: String, CaseIterable, Identifiable {
         case .firstNameAZ: return "First Name (A–Z)"
         case .group: return "Group"
         case .unassignedFirst: return "Unassigned First"
+        case .newestAdded: return "Newest Added"
+        case .oldestAdded: return "Oldest Added"
         }
     }
 }
@@ -119,6 +123,21 @@ enum SeatingLogic {
             return guests.sorted { lhs, rhs in
                 if lhs.isAssigned != rhs.isAssigned { return !lhs.isAssigned && rhs.isAssigned }
                 return lhs.lastNameKey < rhs.lastNameKey
+            }
+        // created_at is an ISO-8601 string, so lexicographic order is
+        // chronological. "Oldest Added" reproduces import/file order because
+        // imports insert sequentially. Ties break on id for a stable order.
+        case .newestAdded:
+            return guests.sorted { lhs, rhs in
+                let l = lhs.createdAt ?? "", r = rhs.createdAt ?? ""
+                if l == r { return lhs.id > rhs.id }
+                return l > r
+            }
+        case .oldestAdded:
+            return guests.sorted { lhs, rhs in
+                let l = lhs.createdAt ?? "", r = rhs.createdAt ?? ""
+                if l == r { return lhs.id < rhs.id }
+                return l < r
             }
         }
     }

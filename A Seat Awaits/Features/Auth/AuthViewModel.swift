@@ -48,11 +48,23 @@ final class AuthViewModel {
         self.onAuthenticated = onAuthenticated
     }
 
-    var canSubmit: Bool {
-        let emailOK = email.contains("@") && email.contains(".")
-        let passOK = password.count >= 6
-        let nameOK = mode == .signIn || !fullName.trimmingCharacters(in: .whitespaces).isEmpty
-        return emailOK && passOK && nameOK && !isSubmitting
+    /// First validation problem with the form, or nil when it's submittable.
+    /// Surfaced as an inline error on tap — the CTA stays enabled so a tap
+    /// always gives visible feedback instead of a silently dead button.
+    private var validationMessage: String? {
+        if mode == .signUp && fullName.trimmingCharacters(in: .whitespaces).isEmpty {
+            return "Enter your full name."
+        }
+        if !(email.contains("@") && email.contains(".")) {
+            return "Enter a valid email address."
+        }
+        if password.isEmpty {
+            return "Enter your password."
+        }
+        if mode == .signUp && password.count < 6 {
+            return "Password must be at least 6 characters."
+        }
+        return nil
     }
 
     func toggleMode() {
@@ -62,7 +74,12 @@ final class AuthViewModel {
     }
 
     func submit() async {
-        guard canSubmit else { return }
+        guard !isSubmitting else { return }
+        if let validationMessage {
+            errorMessage = validationMessage
+            infoMessage = nil
+            return
+        }
         isSubmitting = true
         errorMessage = nil
         infoMessage = nil
@@ -96,6 +113,10 @@ final class AuthViewModel {
                     email: email.trimmingCharacters(in: .whitespaces),
                     password: password
                 )
+                // Idempotent server-side (once-ever marker): heals accounts
+                // whose one-shot signup provisioning call failed, so the
+                // promised sample event can't be permanently lost to a blip.
+                await provisionSampleEvent()
                 onAuthenticated(user)
             }
         } catch {

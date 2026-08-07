@@ -21,6 +21,12 @@ nonisolated struct AcceptInviteParams: Encodable, Sendable {
     let p_token: String
 }
 
+/// Encodable params for the `swap_event_pass` RPC.
+nonisolated struct SwapEventPassParams: Encodable, Sendable {
+    let p_event_id: String
+    let p_pass_id: String
+}
+
 /// Encodable params for the `event_seating_summary` RPC.
 nonisolated struct SeatingSummaryParams: Encodable, Sendable {
     let p_event_ids: [String]
@@ -39,6 +45,10 @@ final class EventStore {
     private(set) var pendingInvites: [EventInvitation] = []
     private(set) var isLoading = false
     var errorMessage: String?
+    /// True when the last events load threw — distinguishes "you have no
+    /// events" from "we couldn't load your events" so the dashboard never
+    /// shows a misleading empty state after a network failure.
+    private(set) var loadFailed = false
 
     /// Shared undo banner for reversible actions on the dashboard (event delete).
     let undo = UndoToast()
@@ -66,7 +76,9 @@ final class EventStore {
                 ],
                 as: [Event].self
             )
+            loadFailed = false
         } catch {
+            loadFailed = true
             errorMessage = FriendlyError.message(for: error)
         }
         await loadProgress()
@@ -134,8 +146,15 @@ final class EventStore {
 
     /// Creates an event. `owner_id` is assigned by the database default
     /// (`auth.uid()`), matching the web backend, so it is not sent here.
+    ///
+    /// `preferredPassId`: the creation trigger always claims the caller's
+    /// OLDEST unattached Event Pass. When the user picked a different pass in
+    /// the create form, the `swap_event_pass` RPC re-attaches their choice —
+    /// best-effort, mirroring the web (`server/api/events.post.ts`): worst
+    /// case the trigger's pick stays and the event is never left uncovered.
     @discardableResult
-    func create(name: String, date: String?, location: String?, description: String?) async throws -> Event {
+    func create(name: String, date: String?, location: String?, description: String?,
+                preferredPassId: String? = nil) async throws -> Event {
         let created = try await supabase.insert(
             "events",
             values: NewEventDTO(name: name,
@@ -146,6 +165,12 @@ final class EventStore {
         )
         guard let event = created.first else {
             throw SupabaseError.decoding("Event creation returned no row.")
+        }
+        if let passId = preferredPassId {
+            _ = try? await supabase.rpc(
+                "swap_event_pass",
+                params: SwapEventPassParams(p_event_id: event.id, p_pass_id: passId),
+                as: Bool.self)
         }
         events.insert(event, at: 0)
         return event

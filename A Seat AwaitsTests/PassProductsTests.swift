@@ -107,6 +107,24 @@ private func pass(tier: String = "standard", eventId: String? = "e1",
     #expect(!pass(refundedAt: "2026-01-01T00:00:00Z").isActive)
 }
 
+@Test func decodesEmbeddedAttachedEvent() throws {
+    // `selectColumnsWithEvent` embeds the attached event's name; plain rows
+    // (edge-function responses, other queries) simply omit the key.
+    let embedded = """
+    {"id":"p1","event_id":"e1","user_id":"u1","tier":"standard","guest_cap":150,
+     "amount_paid_cents":1999,"ai_imports_used":0,"event":{"name":"Best Day Ever"}}
+    """
+    let bare = """
+    {"id":"p2","event_id":null,"user_id":"u1","tier":"premium","guest_cap":500,
+     "amount_paid_cents":3999,"ai_imports_used":0}
+    """
+    let attached = try JSONDecoder().decode(EventPass.self, from: Data(embedded.utf8))
+    #expect(attached.attachedEventName == "Best Day Ever")
+    let unattached = try JSONDecoder().decode(EventPass.self, from: Data(bare.utf8))
+    #expect(unattached.attachedEventName == nil)
+    #expect(!unattached.isAttached)
+}
+
 // MARK: - Per-event entitlement
 
 @Test func passEntitlesItsEvent() {

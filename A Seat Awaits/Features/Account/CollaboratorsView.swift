@@ -48,6 +48,7 @@ struct CollaboratorsView: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 16)
+            .readableWidth(Layout.contentWidth)
         }
         .background(Brand.canvas.ignoresSafeArea())
         .scrollIndicators(.hidden)

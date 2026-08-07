@@ -40,7 +40,10 @@ struct PaywallView: View {
     @State private var account: AccountStore
     @State private var selectedPeriod: AppleBillingPeriod = .monthly
     @State private var errorMessage: String?
+    @State private var pendingMessage: String?
     @State private var didPurchase = false
+    @State private var isRestoring = false
+    @State private var showRestoreDone = false
 
     private let mode: Mode
 
@@ -79,11 +82,20 @@ struct PaywallView: View {
                 }
             }
         }
+        // On iPad, present as a form sheet instead of a near-fullscreen page
+        // sheet — the offer cards are designed for a narrow column.
+        .presentationSizing(.form)
         .task {
+            // Concurrent: the product catalog must not wait behind the
+            // account's Supabase round-trips.
+            async let productLoad: Void = {
+                if let subscriptions,
+                   subscriptions.products.isEmpty || subscriptions.productLoadErrorMessage != nil {
+                    await subscriptions.loadProducts()
+                }
+            }()
             await account.load()
-            if let subscriptions, subscriptions.products.isEmpty {
-                await subscriptions.loadProducts()
-            }
+            _ = await productLoad
         }
         .alert("Purchase issue",
                isPresented: Binding(get: { errorMessage != nil },
@@ -91,6 +103,15 @@ struct PaywallView: View {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
+        }
+        // Ask to Buy is a successful deferred purchase, not an error — it
+        // gets its own neutral alert.
+        .alert("Purchase pending",
+               isPresented: Binding(get: { pendingMessage != nil },
+                                    set: { if !$0 { pendingMessage = nil } })) {
+            Button("OK", role: .cancel) { pendingMessage = nil }
+        } message: {
+            Text(pendingMessage ?? "")
         }
     }
 
@@ -123,6 +144,18 @@ struct PaywallView: View {
             VStack(spacing: 16) {
                 if let message = subscriptions?.productLoadErrorMessage {
                     FeedbackBanner(kind: .error, message: message)
+                    Button {
+                        Task { await subscriptions?.loadProducts() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if subscriptions?.isLoadingProducts == true {
+                                ProgressView()
+                            }
+                            Text("Try Again")
+                        }
+                    }
+                    .buttonStyle(.secondaryOutline)
+                    .disabled(subscriptions?.isLoadingProducts == true)
                 }
                 if subscriptions?.isActivating == true {
                     FeedbackBanner(kind: .info, message: "Activating your purchase…")
@@ -203,12 +236,13 @@ struct PaywallView: View {
             VStack(alignment: .leading, spacing: 6) {
                 featureLine("One event, up to \(tier.guestCap.formatted()) guests")
                 featureLine("Floor plan editor & drag-and-drop seating")
-                if tier.aiImport { featureLine("AI guest import") }
+                if tier.aiImport {
+                    featureLine("AI guest import (\(tier.aiImportLifetimeCap) imports)")
+                }
                 featureLine("Export & print floor plans")
                 if tier.collaboration {
                     featureLine("Up to \(tier.maxCollaboratorsPerEvent) collaborators")
                 }
-                if tier.eventSharing { featureLine("Event sharing") }
             }
 
             purchaseButton(product: product, title: "Buy \(tier.displayName)") { product in
@@ -267,11 +301,12 @@ struct PaywallView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 featureLine("Guest cap grows to \(tier.guestCap.formatted())")
-                if tier.aiImport && !from.aiImport { featureLine("Adds AI guest import") }
+                if tier.aiImport && !from.aiImport {
+                    featureLine("Adds AI guest import (\(tier.aiImportLifetimeCap) imports)")
+                }
                 if tier.collaboration && !from.collaboration {
                     featureLine("Adds collaboration (up to \(tier.maxCollaboratorsPerEvent) people)")
                 }
-                if tier.eventSharing && !from.eventSharing { featureLine("Adds event sharing") }
             }
 
             purchaseButton(product: product, title: "Upgrade to \(tier.shortName)") { product in
@@ -354,7 +389,6 @@ struct PaywallView: View {
                 featureLine("AI guest import")
                 featureLine("Export & print floor plans")
                 featureLine(tier.limits.collaboratorsText)
-                featureLine("Event sharing")
             }
 
             if hasApplePro {
@@ -428,7 +462,7 @@ struct PaywallView: View {
             await account.refreshBillingState()
             dismiss()
         case .success(.pending):
-            errorMessage = "Your purchase is awaiting approval (for example, Ask to Buy). It will activate automatically once it's approved."
+            pendingMessage = "Your purchase is awaiting approval (for example, Ask to Buy). It will activate automatically once it's approved."
         case .success(.cancelled):
             break
         case .failure(let error):
@@ -440,35 +474,61 @@ struct PaywallView: View {
 
     private var footer: some View {
         VStack(spacing: 10) {
-            Button("Restore Purchases") {
+            Button {
                 Task {
+                    isRestoring = true
+                    defer { isRestoring = false }
                     if let message = await subscriptions?.restorePurchases() {
                         errorMessage = message
                     } else {
                         await account.refreshBillingState()
+                        showRestoreDone = true
                     }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if isRestoring { ProgressView() }
+                    Text("Restore Purchases")
                 }
             }
             .buttonStyle(.secondaryOutline)
+            .disabled(isRestoring)
+            .alert("Restore complete", isPresented: $showRestoreDone) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Your App Store purchases have been synced. If you had no previous purchases, there was nothing to restore.")
+            }
 
             Text(footerDisclosure)
                 .font(.system(size: 11))
                 .foregroundStyle(Brand.slate400)
                 .multilineTextAlignment(.center)
 
-            HStack(spacing: 16) {
-                Button("Terms of Use") { openURL(AccountLinks.termsOfService) }
-                Button("Privacy Policy") { openURL(AccountLinks.privacyPolicy) }
+            HStack(spacing: 4) {
+                footerLink("Terms of Use", url: AccountLinks.termsOfService)
+                footerLink("Privacy Policy", url: AccountLinks.privacyPolicy)
             }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Brand.accent)
         }
         .padding(.top, 4)
     }
 
+    /// Small legal link with a full 44pt hit target — App Review exercises
+    /// these two links on the paywall.
+    private func footerLink(_ title: String, url: URL) -> some View {
+        Button { openURL(url) } label: {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Brand.accent)
+                .padding(.horizontal, 6)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var footerDisclosure: String {
         if case .upgrade = mode {
-            return "Upgrades are one-time purchases applied to this event's pass. Passes never expire; unused passes are refundable."
+            return "Upgrades are one-time purchases applied to this event's pass. Passes never expire. Refund requests are handled by Apple."
         }
         return "Passes are one-time purchases and never expire. The Pro subscription renews automatically until canceled; cancel anytime in your App Store settings and it stays active until the end of the billing period."
     }

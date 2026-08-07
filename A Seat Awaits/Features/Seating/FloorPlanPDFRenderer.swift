@@ -388,9 +388,14 @@ private nonisolated final class Renderer {
             fillStrokeRoundedRect(body, radius: 4, fill: .white, stroke: uiColor("#5b6472"), lineWidth: 1.1)
         }
 
-        // Label (rotates with the table, as in the web export).
+        // Label (rotates with the table, as in the web export). A portrait
+        // rectangle additionally runs its name along the long (vertical) axis
+        // so it isn't truncated inside the narrow width — matching the canvas.
         let labelSize = max(5, min(10, ts(13)))
-        draw(table.name, x: -w/2 + 2, y: -labelSize / 2, width: w - 4,
+        let alongHeight = !isRound && h > w
+        if alongHeight { cg.rotate(by: -.pi / 2) }
+        let labelWidth = alongHeight ? h : w
+        draw(table.name, x: -labelWidth/2 + 2, y: -labelSize / 2, width: labelWidth - 4,
              font: helvetica(labelSize, bold: true), color: uiColor("#1e293b"), align: .center)
 
         cg.restoreGState()

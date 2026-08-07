@@ -96,7 +96,6 @@ struct AccountSecurityView: View {
             }
             .buttonStyle(.primaryBrand)
             .disabled(!canSubmit)
-            .opacity(canSubmit ? 1 : 0.5)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

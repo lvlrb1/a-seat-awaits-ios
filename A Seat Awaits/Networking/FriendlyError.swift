@@ -36,6 +36,17 @@ enum FriendlyError {
             }
         }
 
+        // Edge functions return curated, user-presentable messages (plan
+        // gates, rate limits) — surface them instead of the generic line.
+        if let edge = error as? EdgeFunctionError {
+            return edge.errorDescription ?? "Something went wrong. Please try again."
+        }
+
+        // The local guest-cap gate writes its own upgrade copy.
+        if let cap = error as? GuestCapReachedError {
+            return cap.message
+        }
+
         // Any non-Supabase error (file I/O, etc.) gets a calm generic line.
         return "Something went wrong. Please try again."
     }

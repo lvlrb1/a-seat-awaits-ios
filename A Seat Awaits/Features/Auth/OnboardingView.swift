@@ -105,14 +105,7 @@ struct OnboardingView: View {
                         model.mode = .signIn
                         stage = .form
                     }
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(.white.opacity(0.25), lineWidth: 1)
-                    )
+                    .buttonStyle(.heroOutline)
                     .padding(.top, 12)
                 }
                 .padding(.horizontal, 28)
@@ -217,7 +210,7 @@ struct OnboardingView: View {
                         }
                     }
                     .buttonStyle(.primaryBrand)
-                    .disabled(!model.canSubmit)
+                    .disabled(model.isSubmitting)
                     .padding(.top, 26)
 
                     if isSignUp {
@@ -313,7 +306,13 @@ struct OnboardingView: View {
                 .submitLabel(.go)
                 .onSubmit {
                     focusedField = nil
-                    Task { await model.submit() }
+                    Task {
+                        await model.submit()
+                        // Mirror the CTA button: a confirmation-required
+                        // sign-up must advance to the verify stage here too,
+                        // or keyboard-Go appears to do nothing.
+                        if model.needsEmailVerification { stage = .verify }
+                    }
                 }
 
                 Button(showPassword ? "Hide" : "Show") { showPassword.toggle() }

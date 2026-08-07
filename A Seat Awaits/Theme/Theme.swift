@@ -250,6 +250,7 @@ struct PrimaryButtonStyle: ButtonStyle {
     var isLoading: Bool = false
     var height: CGFloat = 56
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 17, weight: .bold))
@@ -258,9 +259,9 @@ struct PrimaryButtonStyle: ButtonStyle {
             .background(Brand.primaryFill)
             .foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: Brand.plum.opacity(scheme == .dark ? 0 : 0.5),
+            .shadow(color: Brand.plum.opacity(scheme == .dark || !isEnabled ? 0 : 0.5),
                     radius: 13, x: 0, y: 12)
-            .opacity(configuration.isPressed || isLoading ? 0.8 : 1)
+            .opacity(!isEnabled ? 0.5 : (configuration.isPressed || isLoading ? 0.8 : 1))
     }
 }
 
@@ -271,6 +272,7 @@ extension ButtonStyle where Self == PrimaryButtonStyle {
 /// Outlined secondary button — white/clear fill, 1.5px plum border, plum text.
 struct SecondaryOutlineButtonStyle: ButtonStyle {
     var height: CGFloat = 52
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 16, weight: .bold))
@@ -280,7 +282,7 @@ struct SecondaryOutlineButtonStyle: ButtonStyle {
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Brand.accent, lineWidth: 1.5))
             .foregroundStyle(Brand.accent)
-            .opacity(configuration.isPressed ? 0.8 : 1)
+            .opacity(!isEnabled ? 0.5 : (configuration.isPressed ? 0.8 : 1))
     }
 }
 
@@ -305,4 +307,28 @@ struct WhiteButtonStyle: ButtonStyle {
 
 extension ButtonStyle where Self == WhiteButtonStyle {
     static var whiteHero: WhiteButtonStyle { WhiteButtonStyle() }
+}
+
+/// Outlined pill on plum hero surfaces — the frame and border live inside the
+/// style so the entire visible button is tappable, not just the text.
+struct HeroOutlineButtonStyle: ButtonStyle {
+    var height: CGFloat = 52
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .background(.white.opacity(configuration.isPressed ? 0.12 : 0),
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(.white.opacity(0.25), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+extension ButtonStyle where Self == HeroOutlineButtonStyle {
+    static var heroOutline: HeroOutlineButtonStyle { HeroOutlineButtonStyle() }
 }

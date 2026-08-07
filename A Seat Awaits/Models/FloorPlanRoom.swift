@@ -38,7 +38,4 @@ nonisolated struct FloorPlanRoom: Codable, Identifiable, Equatable, Sendable {
     /// Footprint in canvas points (rooms store feet; everything else is points).
     var widthPoints: Double { TableScale.feet(widthFt) }
     var heightPoints: Double { TableScale.feet(heightFt) }
-
-    /// The room's fill, defaulting to the web's neutral slate when unset.
-    var colorHex: String { (color?.isEmpty == false ? color : nil) ?? "#E5E7EB" }
 }

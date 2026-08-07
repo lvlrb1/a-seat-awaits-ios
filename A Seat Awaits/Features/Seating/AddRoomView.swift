@@ -4,8 +4,7 @@
 //
 //  The room form, used to create and edit a floor-plan room — a labelled
 //  boundary (banquet hall, tent, patio) drawn behind the tables to anchor the
-//  layout in real space. Size is entered in feet; a small palette tints the
-//  room's wash so multiple rooms read apart at a glance.
+//  layout in real space. Size is entered in feet.
 //
 
 import SwiftUI
@@ -20,14 +19,9 @@ struct AddRoomView: View {
     @State private var name: String
     @State private var widthFt: Double
     @State private var heightFt: Double
-    @State private var color: String
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var confirmingDelete = false
-
-    /// Soft washes that read as room tints (light enough for labels on top).
-    private static let palette = ["#E5E7EB", "#EDE3F3", "#FCE7F3", "#FEF3C7",
-                                  "#DCFCE7", "#DBEAFE", "#CCFBF1"]
 
     init(store: SeatingStore, editing: FloorPlanRoom? = nil) {
         self.store = store
@@ -36,12 +30,10 @@ struct AddRoomView: View {
             _name = State(initialValue: r.name)
             _widthFt = State(initialValue: r.widthFt)
             _heightFt = State(initialValue: r.heightFt)
-            _color = State(initialValue: r.colorHex)
         } else {
             _name = State(initialValue: "Main Room")
             _widthFt = State(initialValue: 50)
             _heightFt = State(initialValue: 80)
-            _color = State(initialValue: Self.palette[0])
         }
     }
 
@@ -53,7 +45,6 @@ struct AddRoomView: View {
             Form {
                 detailsSection
                 sizeSection
-                colorSection
                 if let errorMessage { errorSection(errorMessage) }
                 if isEditing { deleteSection }
             }
@@ -104,46 +95,6 @@ struct AddRoomView: View {
         }
     }
 
-    private var colorSection: some View {
-        Section("Color") {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(Self.palette, id: \.self) { hex in
-                        swatch(hex)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-        }
-    }
-
-    private func swatch(_ hex: String) -> some View {
-        let selected = color.caseInsensitiveCompare(hex) == .orderedSame
-        return Button { color = hex } label: {
-            Circle()
-                .fill(Color.hex(hex))
-                .frame(width: 36, height: 36)
-                .overlay(Circle().strokeBorder(Brand.slate300, lineWidth: 1))
-                .overlay {
-                    if selected {
-                        Circle().strokeBorder(Brand.accent, lineWidth: 3)
-                            .padding(-3)
-                    }
-                }
-                .overlay {
-                    if selected {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 14, weight: .heavy))
-                            .foregroundStyle(Brand.ink)
-                    }
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Room color \(hex)")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
     private func errorSection(_ message: String) -> some View {
         Section {
             Label(message, systemImage: "exclamationmark.circle.fill")
@@ -174,7 +125,7 @@ struct AddRoomView: View {
 
         if let editing {
             let updated = await store.updateRoom(editing, name: finalName,
-                                                 widthFt: w, heightFt: h, color: color)
+                                                 widthFt: w, heightFt: h)
             if updated != nil {
                 dismiss()
             } else {
@@ -186,8 +137,7 @@ struct AddRoomView: View {
             let offset = Double(store.rooms.count % 4) * 24
             do {
                 try await store.addRoom(name: finalName, widthFt: w, heightFt: h,
-                                        positionX: 40 + offset, positionY: 40 + offset,
-                                        color: color)
+                                        positionX: 40 + offset, positionY: 40 + offset)
                 dismiss()
             } catch {
                 errorMessage = FriendlyError.message(for: error)

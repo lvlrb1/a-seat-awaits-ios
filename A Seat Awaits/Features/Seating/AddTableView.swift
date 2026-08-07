@@ -108,6 +108,9 @@ struct AddTableView: View {
                 }
             }
         }
+        // Match the table detail/assign sheets: full-height page sheet on iPad
+        // instead of the small centered form-sheet card.
+        .presentationSizing(.page)
     }
 
     // MARK: - Sections
@@ -168,7 +171,7 @@ struct AddTableView: View {
 
     private var capacityWarningSection: some View {
         Section {
-            Label("\(seatedCount) guest\(seatedCount == 1 ? "" : "s") seated here exceed the new capacity of \(capacity). They'll stay seated, but the table will show as over capacity.",
+            Label("This table already has \(seatedCount) guest\(seatedCount == 1 ? "" : "s") seated — more than the \(capacity) seats you've set. No one will be unseated, but the table will show as over capacity.",
                   systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(Brand.warningText)
                 .font(.footnote)

@@ -85,8 +85,7 @@ struct EventDetailView: View {
         .sheet(isPresented: $showingAddGuest) { AddGuestView(store: store) }
         .sheet(isPresented: $showingAddTable) { AddTableView(store: store) }
         .sheet(isPresented: $showingExport) {
-            ExportFloorPlanSheet(event: event, tables: store.tables, guests: store.guests,
-                                 shapes: store.shapes, rooms: store.rooms)
+            ExportFloorPlanSheet(store: store)
         }
         .sheet(isPresented: $showingQRCode) {
             if let supabase = appState.supabase {
@@ -109,7 +108,11 @@ struct EventDetailView: View {
         }
         #endif
         .sheet(isPresented: $showingPassUpgrade, onDismiss: {
-            Task { await loadEventPass() }
+            Task {
+                await loadEventPass()
+                // A tier change can unlock feature gates (export, AI import).
+                await store.loadEntitlement()
+            }
         }) {
             if let supabase = appState.supabase, let tier = eventPass?.passTier {
                 PaywallView(supabase: supabase, appState: appState,
@@ -210,6 +213,19 @@ struct EventDetailView: View {
                             trailing: "chevron.right")
                 }
                 .buttonStyle(.plain)
+
+                // The branded floor-plan PDF (same sheet as the Tables-tab
+                // toolbar icon; paid-gated inside). Disabled until the plan
+                // has anything to draw.
+                Button {
+                    showingExport = true
+                } label: {
+                    moreRow(icon: "printer", title: "Export & Print Floor Plan",
+                            trailing: "chevron.right")
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasFloorPlan)
+                .opacity(hasFloorPlan ? 1 : 0.5)
 
                 // Export this event's guest list as a CSV via the share sheet.
                 // Disabled until there are guests to export.

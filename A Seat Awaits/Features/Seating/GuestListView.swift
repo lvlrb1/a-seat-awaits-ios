@@ -226,8 +226,10 @@ struct GuestListView: View {
                 .frame(width: 38, height: 32)
                 .background(Brand.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 // Keep the 38×32 pill visual but guarantee a 44pt hit target (A11y-5).
-                .contentShape(Rectangle())
+                // Frame first, then contentShape, so the shape captures the
+                // expanded bounds rather than the smaller pill.
                 .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .accessibilityLabel("Sort guests")
     }
@@ -256,6 +258,7 @@ struct GuestListView: View {
                         .frame(height: 34)
                         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .strokeBorder(Brand.accent, lineWidth: 1.5))
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }

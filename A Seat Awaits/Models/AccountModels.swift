@@ -96,6 +96,11 @@ nonisolated struct AccountSnapshot: Equatable, Sendable {
                            fallbackStatus: profile?.subscriptionStatus)
     }
 
+    /// Grandfathered early member: keeps the legacy Free plan (1 event,
+    /// 25 guests). New free accounts have no plan of their own — they buy
+    /// Event Passes (or Pro) and get collaborator access to shared events.
+    var isLegacyFree: Bool { profile?.legacyFree == true }
+
     /// Non-refunded passes (a pass never expires; only a refund revokes it).
     var activePasses: [EventPass] { passes.filter(\.isActive) }
 

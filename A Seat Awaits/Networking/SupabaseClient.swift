@@ -57,9 +57,17 @@ actor SupabaseClient {
         if existing.isExpiring {
             do {
                 try await refreshToken()
-            } catch {
+            } catch SupabaseError.http(let status, _) where (400..<500).contains(status) {
+                // Definitive auth rejection — the refresh token is dead.
                 setSession(nil)
                 return nil
+            } catch {
+                // Transient failure (offline, timeout, 5xx): keep the stored
+                // session — the refresh token may be perfectly valid, and
+                // `validAccessToken` retries the refresh before every request
+                // once connectivity returns. Wiping the Keychain here would
+                // sign the user out over a network blip at launch.
+                return existing.user
             }
         }
         return session?.user

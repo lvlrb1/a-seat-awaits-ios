@@ -2,9 +2,11 @@
 //  GuestDetailSheet.swift
 //  A Seat Awaits
 //
-//  Tap a guest → quick-assign sheet. Shows the guest's details (household,
-//  dietary, notes) and a list of tables with open-seat counts and a "best match"
-//  hint, then a pinned "Seat at {table}" CTA. Section 04 of the design spec.
+//  Tap a guest → quick-assign sheet. Fixed zones per the HIG (matching
+//  TableDetailSheet): Close in the top bar, guest details + table search fixed
+//  below it, only the table list scrolls, and the "Seat at {table}" CTA is
+//  pinned to the bottom. Page sheet on iPad; medium detent on iPhone.
+//  Section 04 of the design spec.
 //
 
 import SwiftUI
@@ -47,25 +49,54 @@ struct GuestDetailSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Grabber().padding(.top, 10).padding(.bottom, 4)
+            topBar
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    header
-                    attributeChips
-                    if let notes = guest.notes?.nilIfBlank {
-                        notesCard(notes)
-                    }
-                    if store.canEdit { assignSection }
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                attributeChips
+                if let notes = guest.notes?.nilIfBlank { noteRow(notes) }
+                if store.canEdit { assignHeader }
+            }
+            .padding(.horizontal, 24)
+
+            if store.canEdit {
+                ScrollView {
+                    tableList
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                        .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, store.canEdit ? 120 : 24)
+            } else {
+                Spacer(minLength: 0)
             }
         }
         .background(Brand.card)
-        .overlay(alignment: .bottom) { if store.canEdit { ctaBar } }
-        .presentationDragIndicator(.hidden)
-        .presentationDetents([.large])
+        .safeAreaInset(edge: .bottom) { if store.canEdit { ctaBar } }
+        .presentationDragIndicator(.visible)
+        .presentationDetents([.medium, .large])
+        // Full-height page sheet on iPad, matching the table sheets.
+        .presentationSizing(.page)
+    }
+
+    // MARK: - Top bar
+
+    private var topBar: some View {
+        HStack {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+                    .frame(width: 32, height: 32)
+                    .background(Brand.control, in: Circle())
+            }
+            .accessibilityLabel("Close")
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        // Clear the system grabber overlaid at the sheet's top edge.
+        .padding(.top, 16)
+        .padding(.bottom, 2)
     }
 
     // MARK: - Header
@@ -87,7 +118,7 @@ struct GuestDetailSheet: View {
             Spacer(minLength: 8)
             statusBadge
         }
-        .padding(.top, 12)
+        .padding(.top, 2)
     }
 
     private var householdLine: String? {
@@ -133,29 +164,27 @@ struct GuestDetailSheet: View {
 
     // MARK: - Notes
 
-    private func notesCard(_ notes: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("NOTES")
-                .font(.system(size: 12, weight: .bold))
-                .tracking(0.5)
+    /// Compact fixed note line (mirrors TableDetailSheet); guest notes are
+    /// typically short, and keeping this out of the scroll preserves the fixed
+    /// header + scrolling-list structure.
+    private func noteRow(_ notes: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "note.text")
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Brand.slate400)
             Text(notes)
-                .font(.system(size: 14))
+                .font(.system(size: 13))
                 .lineSpacing(2)
-                .foregroundStyle(Brand.textPrimary)
+                .foregroundStyle(Brand.textSecondary)
+                .lineLimit(3)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.dynamic(Brand.slate50, Brand.cardDark),
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(Brand.hairline, lineWidth: 1))
-        .padding(.top, 18)
+        .padding(.top, 14)
     }
 
     // MARK: - Assign to a table
 
-    private var assignSection: some View {
+    /// Fixed title + search; the matching table list scrolls below it.
+    private var assignHeader: some View {
         VStack(alignment: .leading, spacing: 11) {
             Text("Assign to a table")
                 .font(.system(size: 15, weight: .bold))
@@ -168,29 +197,33 @@ struct GuestDetailSheet: View {
                     .padding(.vertical, 8)
             } else {
                 SearchField(text: $tableSearch, placeholder: "Search tables", height: 42)
-
-                let tables = visibleTables
-                if tables.isEmpty {
-                    Text("No tables match “\(tableSearch)”.")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Brand.textSecondary)
-                        .padding(.vertical, 8)
-                } else {
-                    LazyVStack(spacing: 9) {
-                        ForEach(tables) { table in
-                            tableRow(table)
-                        }
-                    }
-                }
             }
         }
         .padding(.top, 20)
     }
 
+    @ViewBuilder
+    private var tableList: some View {
+        if !store.tables.isEmpty {
+            let tables = visibleTables
+            if tables.isEmpty {
+                Text("No tables match “\(tableSearch)”.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Brand.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+            } else {
+                LazyVStack(spacing: 9) {
+                    ForEach(tables) { table in
+                        tableRow(table)
+                    }
+                }
+            }
+        }
+    }
+
     private func tableRow(_ table: SeatingTable) -> some View {
-        let remaining = SeatingLogic.remainingSeats(table, guests: store.guests)
         let isSelected = targetTableId == table.id
-        let isFull = (remaining ?? 1) == 0 && guest.tableId != table.id
 
         return Button {
             selectedTableId = table.id
@@ -201,9 +234,9 @@ struct GuestDetailSheet: View {
                     Text(tableTitle(table))
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(isSelected ? Brand.plum : Brand.textPrimary)
-                    Text(seatsLine(remaining: remaining, isFull: isFull))
+                    Text(seatsLine(for: table))
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(seatsColor(remaining: remaining, isFull: isFull, isSelected: isSelected))
+                        .foregroundStyle(seatsColor(for: table, isSelected: isSelected))
                 }
                 Spacer(minLength: 4)
                 if isSelected {
@@ -226,8 +259,6 @@ struct GuestDetailSheet: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isFull)
-        .opacity(isFull ? 0.55 : 1)
     }
 
     private func tableTitle(_ table: SeatingTable) -> String {
@@ -255,16 +286,38 @@ struct GuestDetailSheet: View {
         return Initials.from(table.name)
     }
 
-    private func seatsLine(remaining: Int?, isFull: Bool) -> String {
-        if isFull { return "Full" }
-        if let remaining {
-            return "\(remaining) seat\(remaining == 1 ? "" : "s") open"
+    /// Row subtitle: always leads with the guest's relationship to the table
+    /// ("Seated here") or the real seated/capacity counts, so empty, full, and
+    /// over-capacity tables each read differently and a taken-seats count never
+    /// shows for a table the guest already occupies.
+    private func seatsLine(for table: SeatingTable) -> String {
+        let seatedCount = SeatingLogic.occupancy(of: table.id, guests: store.guests)
+        let isCurrent = guest.tableId == table.id
+        guard let capacity = table.capacity, capacity > 0 else {
+            let counts = seatedCount > 0 ? " · \(seatedCount) seated" : ""
+            return isCurrent ? "Seated here\(counts)" : "Open seating\(counts)"
         }
-        return "Open seating"
+        if isCurrent {
+            return "Seated here · \(seatedCount) of \(capacity) seats taken"
+        }
+        if seatedCount > capacity {
+            return "Over capacity · \(seatedCount) seated at \(capacity) seats"
+        }
+        if seatedCount == capacity {
+            return "Full · all \(capacity) seats taken"
+        }
+        if seatedCount == 0 {
+            return "Empty · \(capacity) seats"
+        }
+        return "\(seatedCount) of \(capacity) seats taken"
     }
 
-    private func seatsColor(remaining: Int?, isFull: Bool, isSelected: Bool) -> Color {
-        if isFull { return Brand.danger }
+    private func seatsColor(for table: SeatingTable, isSelected: Bool) -> Color {
+        let seatedCount = SeatingLogic.occupancy(of: table.id, guests: store.guests)
+        let capacity = table.capacity ?? 0
+        if guest.tableId != table.id && capacity > 0 && seatedCount >= capacity {
+            return Brand.danger
+        }
         // Selected rows sit on a fixed light lavender background in both modes,
         // so keep the subtitle dark enough to read instead of the mode-aware secondary.
         return isSelected ? Brand.slate600 : Brand.textSecondary
@@ -272,9 +325,28 @@ struct GuestDetailSheet: View {
 
     // MARK: - CTA
 
+    /// Set when the picked table has no open seats: full tables stay selectable
+    /// (planners overseat on purpose — extra chairs, kids on laps), but the
+    /// consequence is spelled out before they commit.
+    private var overCapacityWarning: String? {
+        guard let id = targetTableId, id != guest.tableId,
+              let table = store.table(withId: id),
+              let capacity = table.capacity, capacity > 0 else { return nil }
+        let seatedCount = SeatingLogic.occupancy(of: id, guests: store.guests)
+        guard seatedCount >= capacity else { return nil }
+        let over = seatedCount + 1 - capacity
+        return "\(table.name) is full — seating \(guest.name) puts it \(over) over its \(capacity) seats."
+    }
+
     @ViewBuilder
     private var ctaBar: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 8) {
+            if let warning = overCapacityWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Brand.warningText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             Button {
                 seat()
             } label: {
@@ -287,10 +359,10 @@ struct GuestDetailSheet: View {
             .buttonStyle(.primaryBrand)
             .disabled(targetTableId == nil || isSaving)
             .opacity(targetTableId == nil ? 0.5 : 1)
-            .padding(.horizontal, 24)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
         .background(
             Brand.card
                 .overlay(Brand.separator.frame(height: 1), alignment: .top)

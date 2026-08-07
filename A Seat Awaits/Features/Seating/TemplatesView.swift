@@ -100,7 +100,6 @@ struct TemplatesView: View {
             }
             .buttonStyle(.secondaryOutline)
             .disabled(!hasLayout)
-            .opacity(hasLayout ? 1 : 0.5)
 
             if !hasLayout {
                 Text("Add a table or room first, then save it as a template.")

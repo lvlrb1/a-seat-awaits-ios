@@ -80,7 +80,9 @@ final class CollaboratorsStore {
             invitations = try await loadPendingInvitations(userId: userId, eventIDs: ownedIDs)
 
             // 5. Resolve display names for share / invitation emails.
-            resolvedNames = try await resolveNames()
+            // Best-effort: a failed lookup shouldn't take down the whole
+            // screen — rows fall back to showing emails.
+            resolvedNames = (try? await resolveNames()) ?? [:]
 
             rebuild()
         } catch {

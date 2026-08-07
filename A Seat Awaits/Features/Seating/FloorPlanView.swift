@@ -95,6 +95,10 @@ struct FloorPlanView: View {
     /// References captured when a pinch begins: the focal point (in scaled-content
     /// coordinates), the zoom, and the offset — the anchors focal zoom maths against.
     @State private var pinchStart: PinchStart?
+    /// The sticky canvas box actually rendered. Seeded from `requiredRect` at the
+    /// initial fit, then only ever GROWS (union) — so committing a table move
+    /// never shifts the canvas origin under the user's framing. See `syncCanvasBox`.
+    @State private var canvasBox: CGRect = .zero
 
     private struct PinchStart {
         let anchor: CGPoint
@@ -178,14 +182,6 @@ struct FloorPlanView: View {
         }
         .sheet(isPresented: $showingAddRoom) { AddRoomView(store: store) }
         .sheet(isPresented: $showingTemplates) { TemplatesView(store: store) }
-        .confirmationDialog(deleteDialogTitle,
-                            isPresented: $confirmingDelete,
-                            titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { performDelete() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(deleteDialogMessage)
-        }
         .sensoryFeedback(.error, trigger: errorTick)
         .onAppear { pulse = true }
         // Selection only makes sense on an editable canvas — clear it when the
@@ -292,6 +288,9 @@ struct FloorPlanView: View {
                             .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.12), radius: 3, y: 1)
                     }
                 }
+                // The unselected segment has no background, so without a content
+                // shape only the glyph itself would be tappable.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(label) view")
@@ -323,17 +322,50 @@ struct FloorPlanView: View {
             floorPlan
                 .onAppear {
                     viewportSize = geo.size
+                    syncCanvasBox()
                     maybeInitialFit()
                 }
                 .onChange(of: geo.size) { _, size in
                     viewportSize = size
                     maybeInitialFit()
+                    syncCanvasBox()
                 }
                 // Tables may arrive after the canvas first appears (a room can
                 // render the canvas with no tables yet); fit once they do.
                 .onChange(of: store.tables.count) { _, _ in
                     maybeInitialFit()
                 }
+                // Fires after any commit that changes the items' spread (a table
+                // dragged past the margin, an import, a viewport resize). The
+                // frame that changed it still rendered against the old sticky
+                // box, so there's no visible jump; this grows the box for next
+                // frame and shifts the scroll offset to match.
+                .onChange(of: requiredRect) { _, _ in
+                    syncCanvasBox()
+                }
+        }
+    }
+
+    /// Folds the latest `requiredRect` into the sticky `canvasBox`. Until the
+    /// initial fit the box simply tracks the requirement (items may still be
+    /// loading). After that it only ever grows — the union — so the canvas the
+    /// user framed never shifts because a table was moved or deleted. When the
+    /// box does have to grow up/left (an item dragged past the old margin), the
+    /// scroll offset is shifted by the same scaled delta so the view stays put.
+    private func syncCanvasBox() {
+        let required = requiredRect
+        guard didInitialFit else {
+            canvasBox = required
+            return
+        }
+        let merged = canvasBox.union(required)
+        guard merged != canvasBox else { return }
+        let dx = (canvasBox.minX - merged.minX) * effectiveZoom
+        let dy = (canvasBox.minY - merged.minY) * effectiveZoom
+        canvasBox = merged
+        if dx != 0 || dy != 0 {
+            scrollPosition.scrollTo(point: CGPoint(x: scrollOffset.x + dx,
+                                                   y: scrollOffset.y + dy))
         }
     }
 
@@ -342,6 +374,9 @@ struct FloorPlanView: View {
     private func maybeInitialFit() {
         guard !didInitialFit, viewportSize.width > 0, !store.tables.isEmpty else { return }
         didInitialFit = true
+        // Fresh box around the real layout — drops the placeholder box that may
+        // have been seeded before the items arrived.
+        canvasBox = requiredRect
         fitToLayout(animated: false)
     }
 
@@ -375,7 +410,11 @@ struct FloorPlanView: View {
                         .position(tableCenter(table, origin: origin))
                         .id(table.id)
                         .onTapGesture { handleTableTap(table) }
-                        .gesture(canMove(table.id) ? dragGesture(forTable: table) : nil)
+                        // High priority so a touch that starts on the item claims
+                        // the pan outright — otherwise the ScrollView can begin
+                        // scrolling in the pre-activation window and keep tracking
+                        // alongside the move (canvas pans with the table on iPad).
+                        .highPriorityGesture(canMove(table.id) ? dragGesture(forTable: table) : nil)
                         .simultaneousGesture(canTwist(table) ? twistGesture(forTable: table) : nil)
                 }
 
@@ -419,13 +458,20 @@ struct FloorPlanView: View {
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: rotateSnapTick)
     }
 
-    /// The scrollable canvas rectangle in absolute coordinates. It grows to
-    /// enclose every item — including web-authored tables at negative or
+    /// The canvas rectangle actually rendered. `requiredRect` is what the current
+    /// items demand; `canvasBox` is the sticky version of it that only grows.
+    /// Rendering the sticky box is what keeps the origin — and therefore the
+    /// user's framing — rock-steady across table moves.
+    private var contentRect: CGRect {
+        canvasBox.isEmpty ? requiredRect : canvasBox
+    }
+
+    /// The minimal scrollable canvas rectangle, in absolute coordinates. It
+    /// encloses every item — including web-authored tables at negative or
     /// far-flung coordinates — with a generous margin so there's always room to
     /// pan and reposition. Items are rendered at `coordinate - contentRect.origin`
     /// so the box always starts at the ScrollView's (0,0).
-    private var contentRect: CGRect {
-        let pad: CGFloat = 240
+    private var requiredRect: CGRect {
         var minX = CGFloat.greatestFiniteMagnitude, minY = CGFloat.greatestFiniteMagnitude
         var maxX = -CGFloat.greatestFiniteMagnitude, maxY = -CGFloat.greatestFiniteMagnitude
         func include(_ x: Double, _ y: Double, _ w: Double, _ h: Double) {
@@ -444,16 +490,25 @@ struct FloorPlanView: View {
         let fillW = viewportSize.width / z * 1.3
         let fillH = viewportSize.height / z * 1.3
 
+        // The margin past the outermost item on EVERY side must cover half a
+        // viewport at the most-zoomed-out level (`viewport / (2·minZoom)` in
+        // unscaled units) — that's what lets any item be scrolled to the center
+        // of the screen at any zoom, so the canvas feels infinite instead of
+        // hitting a wall just past the layout. Zoom-independent on purpose: the
+        // box must not resize mid-pinch.
+        let padX = max(240, viewportSize.width / (2 * z))
+        let padY = max(240, viewportSize.height / (2 * z))
+
         guard minX <= maxX else {
             let w = max(canvasSize.width, fillW), h = max(canvasSize.height, fillH)
             return CGRect(origin: .zero, size: CGSize(width: w, height: h))
         }
-        // Origin stays anchored to the items' top-left (with a margin) so it only
-        // shifts when the spread itself changes — moving a table never makes the
-        // whole canvas jump. The box just grows down/right to fill the screen.
-        let originX = minX - pad, originY = minY - pad
-        let width = max(canvasSize.width, (maxX - minX) + pad * 2, fillW)
-        let height = max(canvasSize.height, (maxY - minY) + pad * 2, fillH)
+        // Origin anchors to the items' top-left minus the margin. This rect moves
+        // when items move — `canvasBox` (the sticky union of it over time) is what
+        // shields the rendered canvas from those shifts.
+        let originX = minX - padX, originY = minY - padY
+        let width = max(canvasSize.width, (maxX - minX) + padX * 2, fillW)
+        let height = max(canvasSize.height, (maxY - minY) + padY * 2, fillH)
         return CGRect(x: originX, y: originY, width: width, height: height)
     }
 
@@ -473,7 +528,7 @@ struct FloorPlanView: View {
                              origin: origin))
             .id(room.id)
             .onTapGesture { handleRoomTap(room) }
-            .gesture(canMove(room.id) ? dragGesture(forRoom: room) : nil)
+            .highPriorityGesture(canMove(room.id) ? dragGesture(forRoom: room) : nil)
     }
 
     private func shapeLayer(_ shape: DecorShape, origin: CGPoint) -> some View {
@@ -493,7 +548,7 @@ struct FloorPlanView: View {
                              origin: origin))
             .id(shape.id)
             .onTapGesture { handleShapeTap(shape) }
-            .gesture(canMove(shape.id) ? dragGesture(forShape: shape) : nil)
+            .highPriorityGesture(canMove(shape.id) ? dragGesture(forShape: shape) : nil)
             .simultaneousGesture(canTwist(shape) ? twistGesture(forShape: shape) : nil)
     }
 
@@ -568,11 +623,14 @@ struct FloorPlanView: View {
         let focal = CGPoint(x: scrollOffset.x + viewportSize.width / 2,
                             y: scrollOffset.y + viewportSize.height / 2)
         let target = anchoredOffset(focal: focal, from: zoom, to: z1, offset: scrollOffset)
-        withAnimation(.snappy(duration: 0.2)) { zoom = z1; gestureZoom = 1 }
-        // Apply the offset after the zoom resizes the content, so it lands in the
-        // final coordinate space.
-        DispatchQueue.main.async {
-            withAnimation(.snappy(duration: 0.2)) { scrollPosition.scrollTo(point: target) }
+        // Zoom and offset in ONE transaction: the content resize and the scroll
+        // ride the same animation, so the view scales around the center in one
+        // fluid motion — deferring the scroll a runloop makes the canvas zoom
+        // first and then visibly slide to catch up.
+        withAnimation(.snappy(duration: 0.2)) {
+            zoom = z1
+            gestureZoom = 1
+            scrollPosition.scrollTo(point: target)
         }
     }
 
@@ -620,14 +678,12 @@ struct FloorPlanView: View {
                                         y: start.anchor.y / start.zoom)
                     let target = CGPoint(x: scrollOffset.x + focal.x * (settled - zPrev),
                                          y: scrollOffset.y + focal.y * (settled - zPrev))
+                    // One transaction — the spring-back scales and scrolls as a
+                    // single motion (see `zoomCentered`).
                     withAnimation(.spring(duration: 0.3)) {
                         zoom = settled
                         gestureZoom = 1
-                    }
-                    DispatchQueue.main.async {
-                        withAnimation(.spring(duration: 0.3)) {
-                            scrollPosition.scrollTo(point: target)
-                        }
+                        scrollPosition.scrollTo(point: target)
                     }
                 }
             }
@@ -676,18 +732,18 @@ struct FloorPlanView: View {
         // Into scaled-content space, where `anchoredOffset` does its algebra.
         let focal = CGPoint(x: canvasPoint.x * zoom, y: canvasPoint.y * zoom)
         let target = anchoredOffset(focal: focal, from: zoom, to: z1, offset: scrollOffset)
-        withAnimation(.snappy(duration: 0.25)) { zoom = z1; gestureZoom = 1 }
-        DispatchQueue.main.async {
-            withAnimation(.snappy(duration: 0.25)) { scrollPosition.scrollTo(point: target) }
+        // One transaction — scale and scroll as a single motion (see `zoomCentered`).
+        withAnimation(.snappy(duration: 0.25)) {
+            zoom = z1
+            gestureZoom = 1
+            scrollPosition.scrollTo(point: target)
         }
     }
 
     /// Zooms and scrolls so the spread of tables fills the viewport, centering on
     /// the tables' bounding box — never the room. The offset is computed in the
     /// canvas's *scaled* coordinate space (`scrollPosition.scrollTo(point:)`),
-    /// which lands precisely even when a room has enlarged the canvas. The scroll
-    /// is deferred one runloop so it's applied after the new zoom has resized the
-    /// content.
+    /// which lands precisely even when a room has enlarged the canvas.
     private func fitToLayout(animated: Bool = true) {
         guard !store.tables.isEmpty, viewportSize.width > 0 else { return }
 
@@ -713,24 +769,21 @@ struct FloorPlanView: View {
         let centerX = (minX + maxX) / 2 - origin.x
         let centerY = (minY + maxY) / 2 - origin.y
 
+        // The point is the canvas's top-leading: the tables' scaled center minus
+        // half the viewport. Zoom and scroll commit in the same transaction so
+        // the fit reads as one motion, not a zoom followed by a slide.
+        let point = CGPoint(x: max(0, centerX * fit - viewportSize.width / 2),
+                            y: max(0, centerY * fit - viewportSize.height / 2))
         if animated {
-            setZoom(fit)
+            withAnimation(.easeInOut(duration: 0.3)) {
+                zoom = fit
+                gestureZoom = 1
+                scrollPosition.scrollTo(point: point)
+            }
         } else {
             zoom = fit
             gestureZoom = 1
-        }
-
-        // The new zoom resizes the scaled content; scroll after it commits so the
-        // offset lands in the final coordinate space. The point is the canvas's
-        // top-leading: the tables' scaled center minus half the viewport.
-        DispatchQueue.main.async {
-            let point = CGPoint(x: max(0, centerX * fit - viewportSize.width / 2),
-                                y: max(0, centerY * fit - viewportSize.height / 2))
-            if animated {
-                withAnimation(.easeInOut(duration: 0.35)) { scrollPosition.scrollTo(point: point) }
-            } else {
-                scrollPosition.scrollTo(point: point)
-            }
+            scrollPosition.scrollTo(point: point)
         }
     }
 
@@ -913,6 +966,7 @@ struct FloorPlanView: View {
                 .foregroundStyle(Brand.accent)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .background(Brand.hairline.frame(height: 1), alignment: .top)
@@ -1080,6 +1134,16 @@ struct FloorPlanView: View {
             quickAction(icon: "trash", label: "Delete", tint: Brand.danger) {
                 confirmingDelete = true
             }
+            // Anchored here (not on the root) so the iPad popover points at
+            // the Delete button instead of floating at the top of the screen.
+            .confirmationDialog(deleteDialogTitle,
+                                isPresented: $confirmingDelete,
+                                titleVisibility: .visible) {
+                Button("Delete", role: .destructive) { performDelete() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(deleteDialogMessage)
+            }
         }
     }
 
@@ -1219,6 +1283,7 @@ struct FloorPlanView: View {
                     .monospacedDigit()
                     .foregroundStyle(Brand.textSecondary)
                     .frame(width: 44, height: 28)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Reset zoom to 100%")
             zoomButton(icon: "minus", action: { zoomCentered(to: zoom - 0.2) }, accessibility: "Zoom out")
@@ -1237,6 +1302,7 @@ struct FloorPlanView: View {
                 .font(.system(size: 16, weight: .heavy))
                 .foregroundStyle(Brand.textPrimary)
                 .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
         }
         .accessibilityLabel(accessibility)
     }
@@ -1514,9 +1580,19 @@ struct FloorPlanView: View {
 
     /// Soft detents every 15°: within 4° of one, the angle locks onto it (and a
     /// click haptic fires via `rotateSnapTick`); otherwise the twist is free.
+    ///
+    /// The angle is normalised to 0..<360 first — the same domain the store
+    /// commits — so the last live frame and the committed value are numerically
+    /// identical and the settle animation has no ±360° gap to spin through.
+    /// (The mid-gesture wrap at the 0/360 seam is invisible: rotation renders
+    /// modulo 360 and live tracking runs with animation disabled.)
     private func detentAngle(_ raw: Double) -> (degrees: Double, detent: Double?) {
-        let nearest = (raw / 15).rounded() * 15
-        return abs(raw - nearest) <= 4 ? (nearest, nearest) : (raw, nil)
+        let angle = ((raw.truncatingRemainder(dividingBy: 360)) + 360)
+            .truncatingRemainder(dividingBy: 360)
+        let nearest = (angle / 15).rounded() * 15
+        guard abs(angle - nearest) <= 4 else { return (angle, nil) }
+        let snapped = nearest == 360 ? 0 : nearest
+        return (snapped, snapped)
     }
 
     /// Two-finger twist on the selected item: rotates live from the item's
@@ -1609,7 +1685,9 @@ struct FloorPlanView: View {
                 .frame(width: knob, height: knob)
                 .contentShape(Circle().scale(2.8))
                 .offset(y: -(stemBase + stemLength + knob / 2))
-                .gesture(knobDrag(id: id, center: center, commit: commit))
+                // High priority for the same reason as the item move gestures:
+                // the knob drag must claim the touch before the canvas pan does.
+                .highPriorityGesture(knobDrag(id: id, center: center, commit: commit))
         }
         .rotationEffect(.degrees(live))
         .position(center)
@@ -1761,7 +1839,11 @@ struct TableNodeView: View {
     }
 
     private var label: some View {
-        VStack(spacing: 2) {
+        // A portrait rectangle's long axis is vertical — run the label along
+        // it (rotated 90°) so the name gets the table's length to breathe in
+        // instead of truncating inside the narrow width.
+        let alongHeight = !isRound && table.height > table.width
+        return VStack(spacing: 2) {
             Text(table.name)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(isSelected ? Brand.accent : Brand.textPrimary)
@@ -1780,7 +1862,8 @@ struct TableNodeView: View {
         }
         // Clamp the label to the table body so long names ellipsize instead of
         // spilling past the edges.
-        .frame(maxWidth: max(table.width - 16, 40))
+        .frame(maxWidth: max((alongHeight ? table.height : table.width) - 16, 40))
+        .rotationEffect(alongHeight ? .degrees(-90) : .zero)
     }
 
     private var occupancyColor: Color {
@@ -1923,7 +2006,7 @@ struct RoomNodeView: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let fill = scheme == .dark ? Color.white.opacity(0.03) : Color.hex(room.colorHex).opacity(0.5)
+        let fill = scheme == .dark ? Color.white.opacity(0.03) : Color.hex("#E5E7EB").opacity(0.5)
         let stroke = isSelected ? Brand.accent
                                 : (scheme == .dark ? Color.white.opacity(0.4) : Brand.slate500.opacity(0.55))
         RoundedRectangle(cornerRadius: 10, style: .continuous)

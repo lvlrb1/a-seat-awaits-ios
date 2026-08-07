@@ -136,8 +136,16 @@ final class SubscriptionStore {
             let fetched = try await Product.products(
                 for: AppleProducts.allProductIDs + PassProducts.allProductIDs)
             products = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
+            // Judge completeness against only the products actually offered
+            // for sale — the legacy grandfathered subscription tiers may
+            // legitimately be absent from the catalog.
+            let sellableIDs = AppleProducts.purchasableTiers.flatMap { tier in
+                AppleBillingPeriod.allCases.map { AppleProduct(tier: tier, period: $0).productID }
+            } + PassProducts.allProductIDs
             if fetched.isEmpty {
                 productLoadErrorMessage = "Plans aren't available right now. Please try again later."
+            } else if !sellableIDs.allSatisfy({ products[$0] != nil }) {
+                productLoadErrorMessage = "Some plans aren't available right now. Please try again later."
             }
         } catch {
             productLoadErrorMessage = "Couldn't load plans. Check your connection and try again."
@@ -238,6 +246,10 @@ final class SubscriptionStore {
             @unknown default:
                 return .success(.pending)
             }
+        } catch StoreKitError.userCancelled {
+            // Some OS paths report payment-sheet dismissal as a thrown error
+            // rather than the .userCancelled result — not a failure.
+            return .success(.cancelled)
         } catch {
             return .failure(PurchaseError(message: "The purchase couldn't be completed. Please try again."))
         }

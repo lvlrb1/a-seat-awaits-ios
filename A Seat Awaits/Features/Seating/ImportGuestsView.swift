@@ -16,6 +16,22 @@ import UniformTypeIdentifiers
 struct ImportGuestsView: View {
     @Bindable var store: SeatingStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var appState
+
+    @State private var showingPaywall = false
+
+    /// AI structuring is a paid feature (any Event Pass, or the Pro plan). Free
+    /// accounts keep the on-device parser for typed/pasted lists; Excel needs
+    /// the AI Edge Function, so it's blocked when gated. The edge function
+    /// enforces this server-side — the gate keeps the UI honest.
+    private var aiAllowed: Bool { store.entitlement.aiImport }
+
+    /// The event is already at its plan/pass guest cap — importing more would
+    /// only bounce off the DB trigger, so block it up front with upgrade copy.
+    /// Engages only after the entitlement has loaded (same rule as AddGuestView).
+    private var atCapacity: Bool {
+        store.entitlementLoaded && store.guests.count >= store.entitlement.guestCap
+    }
 
     /// A binary spreadsheet the user picked (Excel). Text/CSV files load into the
     /// paste editor instead; only true spreadsheets are held as an attachment.
@@ -60,8 +76,18 @@ struct ImportGuestsView: View {
 
                 ScrollView {
                     VStack(spacing: 0) {
-                        aiBanner
-                            .padding(.top, 14)
+                        if aiAllowed {
+                            aiBanner
+                                .padding(.top, 14)
+                        } else {
+                            aiUpsellBanner
+                                .padding(.top, 14)
+                        }
+
+                        if atCapacity {
+                            capacityBanner
+                                .padding(.top, 12)
+                        }
 
                         dropZone
                             .padding(.top, 18)
@@ -111,6 +137,14 @@ struct ImportGuestsView: View {
             } message: {
                 Text(importError ?? "")
             }
+            .sheet(isPresented: $showingPaywall, onDismiss: {
+                Task { await store.loadEntitlement() }
+            }) {
+                if let supabase = appState.supabase {
+                    PaywallView(supabase: supabase, appState: appState,
+                                mode: .plans(eventId: store.event.id))
+                }
+            }
         }
         .overlay {
             if isStructuring {
@@ -122,12 +156,43 @@ struct ImportGuestsView: View {
 
     // MARK: - AI hint banner
 
+    /// Shown instead of `aiBanner` when the account isn't entitled to AI
+    /// import: the built-in parser still handles typed/pasted names, and the
+    /// button sells an Event Pass (or Pro) for AI structuring + Excel.
+    private var aiUpsellBanner: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Brand.purple)
+                Text("AI import is included with any Event Pass, or the Pro plan.")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Brand.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            Text("Typed or pasted names still import with the built-in parser. Upgrade to structure messy lists and Excel files with AI.")
+                .font(.system(size: 12))
+                .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("View plans") { showingPaywall = true }
+                .buttonStyle(.secondaryOutline)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Brand.plumChipFillSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Brand.plumChipFill, lineWidth: 1)
+        )
+    }
+
     private var aiBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(Brand.purple)
-            Text("We'll structure your guests — adults, partners and children — then you review before importing.")
+            Text("We'll organize your list into guests you can review before importing.")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Brand.accent)
                 .fixedSize(horizontal: false, vertical: true)
@@ -139,6 +204,30 @@ struct ImportGuestsView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Brand.plumChipFill, lineWidth: 1)
+        )
+    }
+
+    /// Blocks the import when the event is already at its guest cap.
+    private var capacityBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Guest limit reached", systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Brand.warningText)
+            Text("This event has \(store.guests.count) of \(store.entitlement.guestCap) guests on \(store.entitlement.guestCapSourceLabel). Upgrade to import more.")
+                .font(.system(size: 12))
+                .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("View plans") { showingPaywall = true }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Brand.accent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.warningFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Brand.warningText.opacity(0.25), lineWidth: 1)
         )
     }
 
@@ -161,12 +250,14 @@ struct ImportGuestsView: View {
                 .foregroundStyle(Brand.textPrimary)
                 .padding(.top, 14)
 
-            Text("Excel, CSV or text file · tap to browse")
+            Text(aiAllowed ? "Excel, CSV or text file · tap to browse"
+                           : "CSV or text file · tap to browse")
                 .font(.system(size: 14))
                 .foregroundStyle(Brand.textSecondary)
                 .padding(.top, 4)
 
-            Text("Supports .xlsx, .xls, .csv and plain text.")
+            Text(aiAllowed ? "Supports .xlsx, .xls, .csv and plain text."
+                           : "Supports .csv and plain text. Excel needs AI import.")
                 .font(.system(size: 12))
                 .foregroundStyle(Brand.textTertiary)
                 .multilineTextAlignment(.center)
@@ -189,6 +280,12 @@ struct ImportGuestsView: View {
                 .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [7, 6]))
                 .foregroundStyle(Brand.slate300)
         )
+        // The copy says "tap to browse" — the whole card must honor that, not
+        // just the small "Choose file" pill (which keeps working; taps inside
+        // it are consumed by the Button before reaching this gesture).
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onTapGesture { showFileImporter = true }
+        .accessibilityAddTraits(.isButton)
     }
 
     // MARK: - Selected spreadsheet chip
@@ -282,15 +379,17 @@ struct ImportGuestsView: View {
                         .tint(.white)
                     Text("Structuring…")
                 } else {
-                    Image(systemName: "sparkles")
+                    // Sparkles promise AI — show a plain glyph when the list
+                    // will be structured by the on-device parser instead.
+                    Image(systemName: aiAllowed ? "sparkles" : "text.badge.checkmark")
                         .font(.system(size: 18, weight: .bold))
-                    Text("Structure list")
+                    Text("Submit")
                 }
             }
         }
         .buttonStyle(.primaryBrand)
-        .disabled(!hasInput || isStructuring)
-        .opacity(!hasInput || isStructuring ? 0.5 : 1)
+        .disabled(!hasInput || isStructuring || atCapacity)
+        .opacity(!hasInput || isStructuring || atCapacity ? 0.5 : 1)
         .padding(.horizontal, 20)
         .padding(.top, 12)
         .padding(.bottom, 16)
@@ -302,7 +401,7 @@ struct ImportGuestsView: View {
 
     private func runImport() {
         editorFocused = false
-        guard hasInput, !isStructuring else { return }
+        guard hasInput, !isStructuring, !atCapacity else { return }
 
         // A picked spreadsheet wins over pasted text.
         let input: GuestImportInput
@@ -344,7 +443,17 @@ struct ImportGuestsView: View {
     /// Structures the input with the AI Edge Function. For text/CSV it falls back
     /// to the on-device parser on any failure; Excel is binary so it has no
     /// offline fallback — a failure there surfaces a friendly message.
+    /// Un-entitled accounts skip the AI call entirely and use the parser.
     private func structuredGuests(for input: GuestImportInput) async -> StructuringOutcome {
+        guard aiAllowed else {
+            switch input {
+            case .text(let text):
+                return .success(GuestImportParser.parse(text))
+            case .file:
+                // Unreachable: the file picker rejects spreadsheets when gated.
+                return .failure("Excel import requires an Event Pass or the Pro plan.")
+            }
+        }
         do {
             return .success(try await store.aiStructureGuests(input))
         } catch {
@@ -367,8 +476,14 @@ struct ImportGuestsView: View {
                 let data = try Data(contentsOf: url)
                 let ext = url.pathExtension.lowercased()
                 if ext == "xlsx" || ext == "xls" {
-                    // Binary spreadsheet — hold it as an attachment; it's parsed
-                    // server-side. Clearing pasteText keeps the input unambiguous.
+                    // Binary spreadsheet — parsed server-side by the AI Edge
+                    // Function, so it's a paid-only input.
+                    guard aiAllowed else {
+                        importError = "Excel files are structured with AI import, included with any Event Pass or the Pro plan. Export your sheet as CSV, or upgrade to import it directly."
+                        return
+                    }
+                    // Hold it as an attachment; clearing pasteText keeps the
+                    // input unambiguous.
                     pickedFile = PickedFile(data: data, name: url.lastPathComponent)
                 } else {
                     // Text / CSV — load into the paste editor so it stays editable.

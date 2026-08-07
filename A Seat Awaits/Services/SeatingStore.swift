@@ -19,10 +19,21 @@ nonisolated struct NewGuestDTO: Encodable, Sendable {
     let group_name: String?
     let notes: String?
     let dietary_preference: String?
+    let table_id: String?
 }
 
 nonisolated struct GuestTablePatch: Encodable, Sendable {
     let table_id: String?
+
+    // Synthesized Encodable drops nil fields entirely, turning an unseat PATCH
+    // into `{}` — a server-side no-op that resurrects the assignment on next
+    // load. Encode nil as an explicit JSON null so PostgREST clears the column.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(table_id, forKey: .table_id)
+    }
+
+    private enum CodingKeys: String, CodingKey { case table_id }
 }
 
 nonisolated struct NewTableDTO: Encodable, Sendable {
@@ -82,6 +93,13 @@ nonisolated struct TableUpdateDTO: Encodable, Sendable {
 /// Encodable params for the `event_collaborators` RPC.
 nonisolated struct EventCollaboratorsParams: Encodable, Sendable {
     let p_event_id: String
+}
+
+/// Thrown by `SeatingStore.addGuest` when the event is at its entitled guest
+/// cap. Carries curated, user-presentable copy (surfaced by `FriendlyError`).
+nonisolated struct GuestCapReachedError: LocalizedError, Sendable {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 // MARK: - Room payloads
@@ -212,6 +230,17 @@ final class SeatingStore {
     /// bulk-seat, guest delete, apply template) — the single pattern from F3.
     let undo = UndoToast()
 
+    /// The signed-in user's effective entitlement on this event: their entitled
+    /// subscription merged with their Event Pass attached to this event (a pass
+    /// never changes the subscription tier, so neither source alone is enough).
+    /// UX gating only — the DB triggers and edge functions remain the real
+    /// enforcement. Free until `loadEntitlement()` resolves.
+    private(set) var entitlement = EventEntitlement.resolve(pass: nil, policy: .free)
+    /// True once the entitlement fetch has completed (even unsuccessfully, which
+    /// leaves the Free fallback in place). Cap warnings wait for this so a slow
+    /// load never flashes a bogus "limit reached" at an entitled user.
+    private(set) var entitlementLoaded = false
+
     /// Whether the current user may mutate the floor plan / guest list.
     var canEdit: Bool { role.canEdit && !accessRevoked }
 
@@ -250,7 +279,9 @@ final class SeatingStore {
         defer { isLoading = false }
         do {
             async let g = supabase.select("guests",
-                                          query: [URLQueryItem(name: "select", value: "*"), eventFilter],
+                                          query: [URLQueryItem(name: "select", value: "*"),
+                                                  eventFilter,
+                                                  URLQueryItem(name: "order", value: "created_at.asc.nullslast")],
                                           as: [Guest].self)
             async let t = supabase.select("tables",
                                           query: [URLQueryItem(name: "select", value: "*"), eventFilter],
@@ -278,6 +309,50 @@ final class SeatingStore {
         }
         await resolveRole()
         await loadCollaborators()
+        await loadEntitlement()
+    }
+
+    /// Resolves the viewer's entitlement for this event (see `entitlement`).
+    /// Errors are non-fatal: the Free fallback stays, matching the web's
+    /// fail-closed feature gates.
+    func loadEntitlement() async {
+        guard let userId = await supabase.currentUser?.id else {
+            entitlementLoaded = true
+            return
+        }
+
+        async let passTask = try? supabase.select(
+            "event_passes",
+            query: [
+                URLQueryItem(name: "select", value: EventPass.selectColumns),
+                eventFilter,
+                URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+            ],
+            as: [EventPass].self)
+        async let subscriptionTask = try? supabase.select(
+            "subscriptions",
+            query: [
+                URLQueryItem(name: "select", value: SubscriptionRow.selectColumns),
+                URLQueryItem(name: "user_id", value: "eq.\(userId)"),
+                URLQueryItem(name: "order", value: "created_at.desc.nullslast"),
+                URLQueryItem(name: "limit", value: "1"),
+            ],
+            as: [SubscriptionRow].self)
+        async let profileTask = try? supabase.select(
+            "users",
+            query: [
+                URLQueryItem(name: "select",
+                             value: "id,full_name,subscription_tier,subscription_status,legacy_free,created_at,updated_at"),
+                URLQueryItem(name: "id", value: "eq.\(userId)"),
+            ],
+            as: [UserProfile].self)
+        let (passes, subscriptions, profiles) = await (passTask, subscriptionTask, profileTask)
+
+        let policy = PlanPolicy.resolve(subscription: subscriptions?.first,
+                                        fallbackTier: profiles?.first?.subscriptionTier,
+                                        fallbackStatus: profiles?.first?.subscriptionStatus)
+        entitlement = EventEntitlement.resolve(pass: passes?.first, policy: policy)
+        entitlementLoaded = true
     }
 
     // MARK: - Permissions
@@ -344,7 +419,15 @@ final class SeatingStore {
                   groupId: String?,
                   groupName: String?,
                   notes: String?,
-                  dietary: String?) async throws -> Guest {
+                  dietary: String?,
+                  tableId: String? = nil) async throws -> Guest {
+        // UX-level cap guard (also stops a bulk import at the line): once the
+        // entitlement is known, reject adds beyond the event's guest cap with
+        // upgrade copy instead of letting the DB bounce the insert.
+        if entitlementLoaded, guests.count >= entitlement.guestCap {
+            throw GuestCapReachedError(
+                message: "Guest limit reached: this event allows \(entitlement.guestCap) guests on \(entitlement.guestCapSourceLabel). Upgrade to add more.")
+        }
         let rows = try await supabase.insert(
             "guests",
             values: NewGuestDTO(event_id: event.id,
@@ -352,7 +435,8 @@ final class SeatingStore {
                                 group_id: groupId,
                                 group_name: groupName?.nilIfBlank,
                                 notes: notes?.nilIfBlank,
-                                dietary_preference: dietary?.nilIfBlank),
+                                dietary_preference: dietary?.nilIfBlank,
+                                table_id: tableId),
             returning: [Guest].self
         )
         guard let guest = rows.first else { throw SupabaseError.decoding("No guest returned.") }
@@ -502,15 +586,13 @@ final class SeatingStore {
             guard let self else { return }
             Task {
                 do {
-                    let recreated = try await self.addGuest(
+                    try await self.addGuest(
                         name: restore.name,
                         groupId: restore.groupId,
                         groupName: restore.groupName,
                         notes: restore.notes,
-                        dietary: restore.dietaryPreference)
-                    if let table = restore.tableId {
-                        await self.assign(recreated, toTable: table)
-                    }
+                        dietary: restore.dietaryPreference,
+                        tableId: restore.tableId)
                 } catch {
                     self.report(error)
                 }
@@ -700,14 +782,13 @@ final class SeatingStore {
                  widthFt: Double,
                  heightFt: Double,
                  positionX: Double,
-                 positionY: Double,
-                 color: String?) async throws -> FloorPlanRoom {
+                 positionY: Double) async throws -> FloorPlanRoom {
         let rows = try await supabase.insert(
             "floorplan_rooms",
             values: NewRoomDTO(event_id: event.id, name: name,
                                width_ft: widthFt, height_ft: heightFt,
                                position_x: positionX, position_y: positionY,
-                               color: color),
+                               color: nil),
             returning: [FloorPlanRoom].self
         )
         guard let room = rows.first else { throw SupabaseError.decoding("No room returned.") }
@@ -715,23 +796,23 @@ final class SeatingStore {
         return room
     }
 
-    /// Saves a room edit (name, size, color). Optimistic with rollback.
+    /// Saves a room edit (name, size). Optimistic with rollback. Always writes
+    /// a NULL color so rooms saved by older builds shed their custom tint.
     @discardableResult
     func updateRoom(_ room: FloorPlanRoom,
                     name: String,
                     widthFt: Double,
-                    heightFt: Double,
-                    color: String?) async -> FloorPlanRoom? {
+                    heightFt: Double) async -> FloorPlanRoom? {
         guard let index = rooms.firstIndex(where: { $0.id == room.id }) else { return nil }
         let previous = rooms[index]
         rooms[index].name = name
         rooms[index].widthFt = widthFt
         rooms[index].heightFt = heightFt
-        rooms[index].color = color
+        rooms[index].color = nil
         do {
             let rows = try await supabase.update(
                 "floorplan_rooms",
-                values: RoomUpdateDTO(name: name, width_ft: widthFt, height_ft: heightFt, color: color),
+                values: RoomUpdateDTO(name: name, width_ft: widthFt, height_ft: heightFt, color: nil),
                 query: [URLQueryItem(name: "id", value: "eq.\(room.id)")],
                 returning: [FloorPlanRoom].self
             )
@@ -1009,7 +1090,7 @@ final class SeatingStore {
                     NewRoomDTO(event_id: event.id, name: r.name,
                                width_ft: r.widthFt, height_ft: r.heightFt,
                                position_x: r.positionX, position_y: r.positionY,
-                               color: r.color, sort_order: r.sortOrder)
+                               color: nil, sort_order: r.sortOrder)
                 }
                 newRooms = try await supabase.insert("floorplan_rooms", values: dtos, returning: [FloorPlanRoom].self)
             }
@@ -1063,7 +1144,7 @@ final class SeatingStore {
                     NewRoomDTO(event_id: event.id, name: r.name,
                                width_ft: r.widthFt, height_ft: r.heightFt,
                                position_x: r.positionX, position_y: r.positionY,
-                               color: r.color, sort_order: r.sortOrder)
+                               color: nil, sort_order: r.sortOrder)
                 }
                 newRooms = try await supabase.insert("floorplan_rooms", values: dtos, returning: [FloorPlanRoom].self)
             }
