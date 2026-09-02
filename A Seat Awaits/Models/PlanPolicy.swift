@@ -167,7 +167,7 @@ nonisolated enum SubscriptionStatus: String, Sendable, Equatable, CaseIterable {
         case .incompleteExpired: return "Expired"
         case .unpaid: return "Unpaid"
         case .paused: return "Paused"
-        case .unknown: return "—"
+        case .unknown: return "Unknown"
         }
     }
 

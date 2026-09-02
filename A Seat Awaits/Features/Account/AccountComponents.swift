@@ -37,7 +37,7 @@ struct AccountSectionHeader: View {
     var body: some View {
         HStack {
             Text(title)
-                .font(.system(size: 13, weight: .bold))
+                .scaledFont(size: 13, weight: .bold)
                 .foregroundStyle(Brand.textSecondary)
                 .textCase(.uppercase)
                 .tracking(0.5)
@@ -77,17 +77,18 @@ struct AccountRowLabel: View {
     var body: some View {
         HStack(spacing: 13) {
             Image(systemName: icon)
-                .font(.system(size: 18, weight: .semibold))
+                .scaledFont(size: 18, weight: .semibold)
                 .foregroundStyle(tint)
                 .frame(width: 22)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(size: 16, weight: .semibold)
                     .foregroundStyle(titleColor ?? (tint == Brand.danger ? Brand.danger : Brand.textPrimary))
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textSecondary)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -98,14 +99,14 @@ struct AccountRowLabel: View {
 
             if let value {
                 Text(value)
-                    .font(.system(size: 15))
+                    .scaledFont(size: 15)
                     .foregroundStyle(Brand.textSecondary)
                     .lineLimit(1)
             }
 
             if let badge {
                 Text(badge)
-                    .font(.system(size: 12, weight: .bold))
+                    .scaledFont(size: 12, weight: .bold)
                     .lineLimit(1)
                     .fixedSize()
                     .foregroundStyle(badgeColors.fg)
@@ -116,13 +117,15 @@ struct AccountRowLabel: View {
 
             if showsChevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Brand.slate300)
+                    .scaledFont(size: 14, weight: .bold)
+                    .foregroundStyle(Brand.textSecondary)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 15)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -163,7 +166,7 @@ struct StatusBadge: View {
 
     var body: some View {
         Text(status.displayName.uppercased())
-            .font(.system(size: 11, weight: .heavy))
+            .scaledFont(size: 11, weight: .heavy)
             .tracking(0.5)
             .lineLimit(1)
             .fixedSize()
@@ -194,10 +197,11 @@ struct FeedbackBanner: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: colors.icon)
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(size: 16, weight: .semibold)
                 .foregroundStyle(colors.fg)
+                .accessibilityHidden(true)
             Text(message)
-                .font(.system(size: 14, weight: .medium))
+                .scaledFont(size: 14, weight: .medium)
                 .foregroundStyle(colors.fg)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -232,7 +236,7 @@ struct AccountHeroHeader: View {
 
             VStack(spacing: 0) {
                 Text("Account")
-                    .font(.system(size: 24, weight: .bold))
+                    .scaledFont(size: 24, weight: .bold)
                     .foregroundStyle(.white)
                     .padding(.top, 8)
 
@@ -242,19 +246,19 @@ struct AccountHeroHeader: View {
                         .frame(width: 84, height: 84)
                         .shadow(color: .black.opacity(0.4), radius: 14, x: 0, y: 12)
                     Text(Initials.from(name))
-                        .font(.system(size: 30, weight: .bold))
+                        .scaledFont(size: 30, weight: .bold)
                         .foregroundStyle(Brand.plum)
                 }
                 .padding(.top, 18)
 
                 Text(name)
-                    .font(.system(size: 20, weight: .bold))
+                    .scaledFont(size: 20, weight: .bold)
                     .foregroundStyle(.white)
                     .padding(.top, 12)
 
                 if let email {
                     Text(email)
-                        .font(.system(size: 14))
+                        .scaledFont(size: 14)
                         .foregroundStyle(.white.opacity(0.7))
                         .padding(.top, 2)
                 }

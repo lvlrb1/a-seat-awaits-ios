@@ -18,7 +18,9 @@ import UIKit
 
 // MARK: - Brand palette (mirrors the web `BRAND` constants)
 
-private enum PDFBrand {
+// `nonisolated`: the project defaults to MainActor isolation, and this palette
+// is read from the nonisolated `Renderer` off the main actor.
+private nonisolated enum PDFBrand {
     static let purple = uiColor("#43204f")
     static let purpleDark = uiColor("#371a40")
     static let purpleLight = uiColor("#6b3a7d")
@@ -27,12 +29,12 @@ private enum PDFBrand {
     static let subtle = uiColor("#6b7280")
 }
 
-private let pixelsPerFoot: CGFloat = 24
-private let site = "aseatawaits.com"
+private nonisolated let pixelsPerFoot: CGFloat = 24
+private nonisolated let site = "aseatawaits.com"
 
 // A4 in PostScript points (pdfkit's 'A4'), portrait.
-private let a4Width: CGFloat = 595.28
-private let a4Height: CGFloat = 841.89
+private nonisolated let a4Width: CGFloat = 595.28
+private nonisolated let a4Height: CGFloat = 841.89
 
 // MARK: - Public entry
 
@@ -733,7 +735,7 @@ private nonisolated final class Renderer {
 
 // MARK: - Hex color
 
-private func uiColor(_ hex: String) -> UIColor {
+private nonisolated func uiColor(_ hex: String) -> UIColor {
     var s = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
     if s.count == 3 { s = s.map { "\($0)\($0)" }.joined() }
     var value: UInt64 = 0

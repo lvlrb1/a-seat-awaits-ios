@@ -46,7 +46,7 @@ struct InviteCollaboratorView: View {
                 .padding(.bottom, 24)
             }
             .background(Brand.canvas)
-            .navigationTitle("Invite collaborator")
+            .navigationTitle("Invite Collaborator")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -69,16 +69,22 @@ struct InviteCollaboratorView: View {
             }
 
             LabeledField(title: "Email", isFocused: focused == .email) {
-                TextField("", text: $email, prompt: Text("Email").foregroundStyle(Brand.slate400))
+                TextField("Email", text: $email, prompt: Text("you@example.com").foregroundStyle(Brand.textSecondary))
                     .textContentType(.emailAddress)
                     .keyboardType(.emailAddress)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .focused($focused, equals: .email)
+                    .submitLabel(.send)
+                    .onSubmit {
+                        guard canSend else { return }
+                        focused = nil
+                        Task { result = await store.sendEmailInvite(name: name, email: email, role: role) }
+                    }
             }
 
             Text("Role")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.slate600)
                 .padding(.top, 4)
 
@@ -91,12 +97,12 @@ struct InviteCollaboratorView: View {
             Text(role == .editor
                  ? "Editors can manage guests, assign seating, and edit the floor plan."
                  : "Viewers can see the guest list, seating, and floor plan, but can't make changes.")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
 
             if let error = store.errorMessage {
                 Label(error, systemImage: "exclamationmark.circle.fill")
-                    .font(.system(size: 13, weight: .medium))
+                    .scaledFont(size: 13, weight: .medium)
                     .foregroundStyle(Brand.danger)
             }
 
@@ -106,7 +112,7 @@ struct InviteCollaboratorView: View {
             } label: {
                 HStack(spacing: 8) {
                     if store.isInviting { ProgressView().tint(.white) }
-                    Text("Send invitation")
+                    Text("Send Invitation")
                 }
             }
             .buttonStyle(.primaryBrand)
@@ -122,26 +128,26 @@ struct InviteCollaboratorView: View {
         let emailed = !summary.deliveryStatus.isFailure && summary.deliveryStatus != .failed
         VStack(alignment: .leading, spacing: 14) {
             Image(systemName: emailed ? "paperplane.fill" : "exclamationmark.triangle.fill")
-                .font(.system(size: 38, weight: .semibold))
+                .scaledFont(size: 38, weight: .semibold)
                 .foregroundStyle(emailed ? Brand.accent : Brand.warning)
                 .padding(.top, 24)
 
             Text(emailed ? "Invitation sent" : "Invitation saved")
-                .font(.system(size: 24, weight: .bold))
+                .scaledFont(size: 24, weight: .bold)
                 .tracking(-0.4)
                 .foregroundStyle(Brand.textPrimary)
 
             Text(emailed
                  ? "We emailed an invitation to \(summary.inviteeEmail). They'll get \(role == .editor ? "edit" : "view") access when they accept."
                  : "We saved the invitation to \(summary.inviteeEmail) but couldn't send the email. You can copy the link below or resend it.")
-                .font(.system(size: 15))
+                .scaledFont(size: 15)
                 .lineSpacing(3)
                 .foregroundStyle(Brand.textSecondary)
 
             if let urlString = summary.inviteUrl, let url = URL(string: urlString) {
                 ShareLink(item: url) {
                     Label("Share invite link", systemImage: "square.and.arrow.up")
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(size: 15, weight: .semibold)
                 }
                 .padding(.top, 4)
             }

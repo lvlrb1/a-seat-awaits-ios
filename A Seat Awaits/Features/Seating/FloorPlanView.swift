@@ -51,12 +51,19 @@ struct FloorPlanView: View {
     }
     @State private var selectedTable: SeatingTable?
     @State private var showingAddTable = false
+    @State private var showingExport = false
     @State private var toast: AssignToast?
     @State private var pulse = false
     /// Bumped when an assign-mode tap lands on a full table, to fire an error haptic.
     @State private var errorTick = 0
+    /// Bumped when a guest lands on a table in assign mode (success haptic).
+    @State private var assignTick = 0
+    /// Bumped when a canvas item finishes deleting (success haptic).
+    @State private var deleteTick = 0
     /// Arms the delete confirmation for whatever canvas item is selected.
     @State private var confirmingDelete = false
+    /// Filters the list mode by table name.
+    @State private var tableSearch = ""
 
     /// Feedback pinned above the tab bar while assigning: green confirmation
     /// when a guest lands, amber warning when the tapped table has no room.
@@ -74,10 +81,9 @@ struct FloorPlanView: View {
     /// Templates sheet with the save-name prompt pre-opened ("Save as Template").
     @State private var showingSaveTemplate = false
     @State private var showingImportPlan = false
-    /// Opt-in snap to the 2ft grid; gentle alignment guides are always on.
-    @State private var snapToGrid = false
-    /// Ensures the layout is auto-framed only once, on first canvas appearance.
-    @State private var didInitialFit = false
+    /// Opt-in snap to the 2ft grid (toggled from the zoom stack, remembered
+    /// across launches); gentle alignment guides are always on.
+    @AppStorage("floorPlan.snapToGrid") private var snapToGrid = false
 
     // Tables can be viewed as a draggable canvas or a sortable list.
     @State private var mode: TablesMode = .canvas
@@ -85,7 +91,18 @@ struct FloorPlanView: View {
     @State private var expandedTables: Set<String> = []
 
     // Zoom: `zoom` is the committed level; `gestureZoom` is the live pinch factor.
-    @State private var zoom: CGFloat = 1
+    // `zoom`, `canvasBox` and `didInitialFit` live on the store's
+    // `FloorPlanViewState` so the framing survives a trip to the Guests tab
+    // (the workspace swaps this view out entirely on every tab switch).
+    private var zoom: CGFloat {
+        get { store.floorPlanState.zoom }
+        nonmutating set { store.floorPlanState.zoom = newValue }
+    }
+    /// Ensures the layout is auto-framed only once, on first canvas appearance.
+    private var didInitialFit: Bool {
+        get { store.floorPlanState.didInitialFit }
+        nonmutating set { store.floorPlanState.didInitialFit = newValue }
+    }
     @State private var gestureZoom: CGFloat = 1
     @State private var viewportSize: CGSize = .zero
     /// Drives the canvas scroll offset so we can frame the tables precisely —
@@ -101,7 +118,10 @@ struct FloorPlanView: View {
     /// The sticky canvas box actually rendered. Seeded from `requiredRect` at the
     /// initial fit, then only ever GROWS (union) — so committing a table move
     /// never shifts the canvas origin under the user's framing. See `syncCanvasBox`.
-    @State private var canvasBox: CGRect = .zero
+    private var canvasBox: CGRect {
+        get { store.floorPlanState.canvasBox }
+        nonmutating set { store.floorPlanState.canvasBox = newValue }
+    }
 
     private struct PinchStart {
         let anchor: CGPoint
@@ -172,24 +192,41 @@ struct FloorPlanView: View {
             overlays
         }
         .background(canvasBackground)
-        .sheet(item: $selectedTable) { table in
+        // The undo snackbar lives on the workspace root, under this sheet; give
+        // it a fresh window once the sheet is out of the way.
+        .sheet(item: $selectedTable, onDismiss: { store.undo.extend() }) { table in
             TableDetailSheet(store: store, table: table)
         }
-        .sheet(isPresented: $showingAddTable) { AddTableView(store: store) }
+        .sheet(isPresented: $showingAddTable) {
+            AddTableView(store: store, suggestedPosition: viewportCenterInCanvas) { table in
+                reveal(id: table.id, center: absoluteCenter(of: table))
+            }
+        }
         .sheet(item: $editingShape) { shape in
             AddShapeView(store: store, editing: shape)
         }
-        .sheet(isPresented: $showingAddShape) { AddShapeView(store: store) }
+        .sheet(isPresented: $showingAddShape) {
+            AddShapeView(store: store, suggestedPosition: viewportCenterInCanvas) { shape in
+                reveal(id: shape.id, center: absoluteCenter(of: shape))
+            }
+        }
         .sheet(item: $editingRoom) { room in
             AddRoomView(store: store, editing: room)
         }
-        .sheet(isPresented: $showingAddRoom) { AddRoomView(store: store) }
+        .sheet(isPresented: $showingAddRoom) {
+            AddRoomView(store: store, suggestedPosition: viewportCenterInCanvas) { room in
+                reveal(id: room.id, center: absoluteCenter(of: room))
+            }
+        }
         .sheet(isPresented: $showingTemplates) { TemplatesView(store: store) }
         .sheet(isPresented: $showingSaveTemplate) {
             TemplatesView(store: store, promptSaveOnAppear: true)
         }
         .sheet(isPresented: $showingImportPlan) { ImportFloorPlanView(store: store) }
+        .sheet(isPresented: $showingExport) { ExportFloorPlanSheet(store: store) }
         .sensoryFeedback(.error, trigger: errorTick)
+        .sensoryFeedback(.success, trigger: assignTick)
+        .sensoryFeedback(.success, trigger: deleteTick)
         .onAppear { pulse = true }
         // Selection only makes sense on an editable canvas — clear it when the
         // context changes out from under it.
@@ -337,7 +374,16 @@ struct FloorPlanView: View {
                 .onAppear {
                     viewportSize = geo.size
                     syncCanvasBox()
-                    maybeInitialFit()
+                    if didInitialFit {
+                        // Back from the Guests tab: pick up exactly where the
+                        // planner left off instead of re-fitting.
+                        scrollPosition.scrollTo(point: store.floorPlanState.scrollOffset)
+                    } else {
+                        maybeInitialFit()
+                    }
+                }
+                .onDisappear {
+                    store.floorPlanState.scrollOffset = scrollOffset
                 }
                 .onChange(of: geo.size) { _, size in
                     viewportSize = size
@@ -401,6 +447,10 @@ struct FloorPlanView: View {
         let content = contentRect
         let origin = content.origin
         let occupancy = occupancyByTable
+        // Who sits where, only once zoomed in enough for initials to read;
+        // one pass over the guests, never a per-seat filter.
+        let showsSeatNames = effectiveZoom > 1.2
+        let seatedByTable = showsSeatNames ? SeatingLogic.seatedGuestsByTable(guests: store.guests) : [:]
         return ScrollView([.horizontal, .vertical]) {
             ZStack(alignment: .topLeading) {
                 DotGrid(dotColor: scheme == .dark ? Brand.hairlineDark : Color.hex("#D6D3CC"))
@@ -413,12 +463,23 @@ struct FloorPlanView: View {
                     // instantly (no double-tap-disambiguation delay), and a
                     // quick second tap steps the zoom.
                     .onTapGesture { location in handleCanvasTap(at: location) }
+                    .accessibilityHidden(true)
 
                 // Back-to-front: rooms, then decorative shapes, then tables.
                 ForEach(store.rooms) { room in roomLayer(room, origin: origin) }
                 ForEach(store.shapes) { shape in shapeLayer(shape, origin: origin) }
                 ForEach(store.tables) { table in
-                    tableNode(table, occupancy: occupancy[table.id, default: 0])
+                    tableNode(table,
+                              occupancy: occupancy[table.id, default: 0],
+                              seatedNames: seatedByTable[table.id]?.map(\.name) ?? [])
+                        // Equatable: a drag re-evaluates this body every frame;
+                        // only the moved node's inputs change, so only it re-renders.
+                        .equatable()
+                        .modifier(NudgeActions(enabled: canMove(table.id)) { dx, dy in
+                            store.updatePosition(of: table,
+                                                 x: (table.positionX ?? 80) + dx,
+                                                 y: (table.positionY ?? 80) + dy)
+                        })
                         .floorPlanSelected(selectedItemID == table.id,
                                            dragging: activeDrag?.id == table.id)
                         .position(tableCenter(table, origin: origin))
@@ -474,6 +535,54 @@ struct FloorPlanView: View {
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: snapTick)
         // …and each time a two-finger twist locks onto a 15° detent.
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: rotateSnapTick)
+        // A warning buzz the moment a drag starts overlapping another item.
+        .sensoryFeedback(trigger: activeDrag?.colliding == true) { old, new in
+            !old && new ? .warning : nil
+        }
+    }
+
+    /// The middle of what the planner is looking at, in absolute canvas
+    /// coordinates — where a newly added item should land. Nil before the
+    /// canvas has ever been laid out (the empty state), in which case the Add
+    /// sheets fall back to the store's default anchor.
+    private var viewportCenterInCanvas: CGPoint? {
+        guard viewportSize.width > 0, hasCanvasContent else { return nil }
+        let z = max(0.01, effectiveZoom)
+        let origin = contentRect.origin
+        return CGPoint(x: origin.x + (scrollOffset.x + viewportSize.width / 2) / z,
+                       y: origin.y + (scrollOffset.y + viewportSize.height / 2) / z)
+    }
+
+    private func absoluteCenter(of table: SeatingTable) -> CGPoint {
+        CGPoint(x: (table.positionX ?? 80) + table.width / 2,
+                y: (table.positionY ?? 80) + table.height / 2)
+    }
+    private func absoluteCenter(of shape: DecorShape) -> CGPoint {
+        CGPoint(x: (shape.positionX ?? 120) + shape.width / 2,
+                y: (shape.positionY ?? 120) + shape.height / 2)
+    }
+    private func absoluteCenter(of room: FloorPlanRoom) -> CGPoint {
+        CGPoint(x: room.positionX + room.widthPoints / 2,
+                y: room.positionY + room.heightPoints / 2)
+    }
+
+    /// Selects a freshly created or duplicated item and scrolls the canvas so
+    /// it sits in the middle of the viewport. `center` is in absolute canvas
+    /// coordinates. Before the canvas has laid out (first table on an empty
+    /// plan) the initial fit takes care of framing instead.
+    private func reveal(id: String, center: CGPoint) {
+        selectItem(id)
+        guard viewportSize.width > 0, didInitialFit else { return }
+        // The new item may sit outside the sticky box; grow it now so the
+        // scroll target is computed against the box that will render.
+        syncCanvasBox()
+        let origin = contentRect.origin
+        let z = effectiveZoom
+        let target = CGPoint(x: max(0, (center.x - origin.x) * z - viewportSize.width / 2),
+                             y: max(0, (center.y - origin.y) * z - viewportSize.height / 2))
+        withAnimation(.easeInOut(duration: 0.3)) {
+            scrollPosition.scrollTo(point: target)
+        }
     }
 
     /// The canvas rectangle actually rendered. `requiredRect` is what the current
@@ -538,6 +647,7 @@ struct FloorPlanView: View {
         // The room fill is non-interactive (canvas pans over it); only the name
         // chip is hittable, so the gestures below effectively bind to the chip.
         RoomNodeView(room: room, isSelected: selectedItemID == room.id)
+            .equatable()
             .frame(width: size.width, height: size.height)
             .floorPlanSelected(selectedItemID == room.id, dragging: activeDrag?.id == room.id)
             .position(center(id: room.id,
@@ -558,6 +668,7 @@ struct FloorPlanView: View {
                              isColliding: activeDrag?.id == shape.id && activeDrag?.colliding == true,
                              isSelected: selectedItemID == shape.id,
                              liveRotating: liveTwist)
+            .equatable()
             .frame(width: side, height: side)
             .floorPlanSelected(selectedItemID == shape.id, dragging: activeDrag?.id == shape.id)
             .position(center(id: shape.id,
@@ -819,7 +930,7 @@ struct FloorPlanView: View {
         return counts
     }
 
-    private func tableNode(_ table: SeatingTable, occupancy: Int) -> some View {
+    private func tableNode(_ table: SeatingTable, occupancy: Int, seatedNames: [String]) -> TableNodeView {
         let capacity = table.capacity ?? 0
         let open = capacity > 0 ? max(0, capacity - occupancy) : capacity
         // Follow the live twist angle while this table is being rotated.
@@ -835,8 +946,29 @@ struct FloorPlanView: View {
             openSeats: open,
             pulse: pulse,
             isColliding: activeDrag?.id == table.id && activeDrag?.colliding == true,
-            liveRotating: liveTwist
+            liveRotating: liveTwist,
+            seatedNames: seatedNames
         )
+    }
+
+    /// VoiceOver repositioning for the selected table: four custom actions
+    /// that nudge it one foot at a time, since a drag gesture isn't reachable.
+    private struct NudgeActions: ViewModifier {
+        let enabled: Bool
+        let nudge: (Double, Double) -> Void
+
+        func body(content: Content) -> some View {
+            if enabled {
+                let foot = TableScale.pointsPerFoot
+                content
+                    .accessibilityAction(named: "Move left 1 foot") { nudge(-foot, 0) }
+                    .accessibilityAction(named: "Move right 1 foot") { nudge(foot, 0) }
+                    .accessibilityAction(named: "Move up 1 foot") { nudge(0, -foot) }
+                    .accessibilityAction(named: "Move down 1 foot") { nudge(0, foot) }
+            } else {
+                content
+            }
+        }
     }
 
     // MARK: - Table list
@@ -845,16 +977,44 @@ struct FloorPlanView: View {
         SeatingLogic.sortedTables(store.tables, by: tableSort, guests: store.guests)
     }
 
+    /// The list, narrowed by the search field (name match, case-insensitive).
+    private var searchedTables: [SeatingTable] {
+        let query = tableSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return sortedTables }
+        return sortedTables.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    /// A search field only earns its space once the list is long enough to
+    /// need one.
+    private var showsTableSearch: Bool { store.tables.count > 5 }
+
     private var tableList: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(sortedTables) { table in
-                    tableListRow(table)
-                }
+        VStack(spacing: 0) {
+            if showsTableSearch {
+                SearchField(text: $tableSearch, placeholder: "Search tables", height: 42)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
             }
-            .padding(16)
-            // Clear the floating "Add Table" button.
-            .padding(.bottom, 80)
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    let tables = searchedTables
+                    if tables.isEmpty, !tableSearch.isEmpty {
+                        Text("No tables match “\(tableSearch.trimmingCharacters(in: .whitespaces))”.")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Brand.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .brandCard()
+                    }
+                    ForEach(tables) { table in
+                        tableListRow(table)
+                    }
+                }
+                .padding(16)
+                // Clear the floating "Add Table" button.
+                .padding(.bottom, 80)
+            }
+            .scrollDismissesKeyboard(.immediately)
         }
         .background(canvasBackground)
     }
@@ -910,6 +1070,7 @@ struct FloorPlanView: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Brand.slate400)
                 .rotationEffect(.degrees(expanded ? 180 : 0))
+                .accessibilityHidden(true)
         }
         .padding(14)
         .contentShape(Rectangle())
@@ -1016,6 +1177,7 @@ struct FloorPlanView: View {
         // Bottom controls — hidden in assign mode. A selected canvas item swaps the
         // zoom/add cluster for its contextual toolbar so the focus stays on it.
         if !isAssigning {
+            let undoShowing = store.undo.message != nil
             VStack {
                 Spacer()
                 if effectiveMode == .canvas, canEdit, let item = selectedCanvasItem {
@@ -1029,8 +1191,11 @@ struct FloorPlanView: View {
                     }
                 }
             }
+            // Lift the controls clear of the undo snackbar while it's up.
+            .padding(.bottom, undoShowing ? 62 : 0)
             .padding(18)
             .animation(.snappy(duration: 0.2), value: selectedItemID)
+            .animation(.snappy(duration: 0.25), value: undoShowing)
         }
 
         // Conflict-helper toast pinned bottom (assign mode).
@@ -1061,6 +1226,10 @@ struct FloorPlanView: View {
                 Label("Save as Template…", systemImage: "square.and.arrow.down")
             }
             .disabled(store.tables.isEmpty && store.rooms.isEmpty)
+            Button { showingExport = true } label: {
+                Label("Export & Print PDF…", systemImage: "printer")
+            }
+            .disabled(!hasCanvasContent)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus").font(.system(size: 17, weight: .heavy))
@@ -1159,7 +1328,7 @@ struct FloorPlanView: View {
                 }
             }
             quickAction(icon: "trash", label: "Delete", tint: Brand.danger) {
-                confirmingDelete = true
+                requestDelete()
             }
             // Anchored here (not on the root) so the iPad popover points at
             // the Delete button instead of floating at the top of the screen.
@@ -1205,10 +1374,23 @@ struct FloorPlanView: View {
         return true
     }
 
+    /// Duplicates the selection and hands focus to the copy: it becomes the
+    /// selected item and scrolls into view, so "Duplicate, then drag" is one
+    /// continuous motion.
     private func duplicateSelection(_ item: SelectedItem) {
         switch item {
-        case .table(let t): Task { await store.duplicateTable(t) }
-        case .shape(let s): Task { await store.duplicateShape(s) }
+        case .table(let t):
+            Task {
+                if let copy = await store.duplicateTable(t) {
+                    reveal(id: copy.id, center: absoluteCenter(of: copy))
+                }
+            }
+        case .shape(let s):
+            Task {
+                if let copy = await store.duplicateShape(s) {
+                    reveal(id: copy.id, center: absoluteCenter(of: copy))
+                }
+            }
         case .room: break
         }
     }
@@ -1219,19 +1401,34 @@ struct FloorPlanView: View {
     }
 
     private var deleteDialogMessage: String {
-        if case .table = selectedCanvasItem {
-            return "Guests at this table will become unassigned."
+        if case .table(let t) = selectedCanvasItem {
+            let n = store.occupancy(of: t)
+            return "\(n) guest\(n == 1 ? "" : "s") seated here will become unassigned. You can undo for a few seconds."
         }
         return "This removes it from the floor plan."
+    }
+
+    /// Only a table with people at it asks first; everything else deletes
+    /// straight away, with undo as the safety net.
+    private func requestDelete() {
+        guard let item = selectedCanvasItem else { return }
+        if case .table(let t) = item, store.occupancy(of: t) > 0 {
+            confirmingDelete = true
+        } else {
+            performDelete()
+        }
     }
 
     private func performDelete() {
         guard let item = selectedCanvasItem else { return }
         deselect()
-        switch item {
-        case .table(let t): Task { await store.deleteTable(t) }
-        case .shape(let s): Task { await store.deleteShape(s) }
-        case .room(let r): Task { await store.deleteRoom(r) }
+        Task {
+            switch item {
+            case .table(let t): await store.deleteTableWithUndo(t)
+            case .shape(let s): await store.deleteShapeWithUndo(s)
+            case .room(let r): await store.deleteRoomWithUndo(r)
+            }
+            if store.errorMessage == nil { deleteTick &+= 1 }
         }
     }
 
@@ -1313,15 +1510,45 @@ struct FloorPlanView: View {
                     .monospacedDigit()
                     .foregroundStyle(Brand.textSecondary)
                     .frame(width: 44, height: 28)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Reset zoom to 100%")
             zoomButton(icon: "minus", action: { zoomCentered(to: zoom / 1.25) }, accessibility: "Zoom out")
+            if canEdit {
+                Divider().frame(width: 40)
+                snapToggle
+            }
         }
         .background(Brand.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(Brand.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.12), radius: 8, y: 2)
+    }
+
+    /// Snap-to-grid toggle (2ft grid). Lit in the accent color while on.
+    private var snapToggle: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.15)) { snapToGrid.toggle() }
+        } label: {
+            Image(systemName: "squareshape.split.3x3")
+                .font(.system(size: 16, weight: .heavy))
+                .foregroundStyle(snapToGrid ? Brand.accent : Brand.textSecondary)
+                .frame(width: 40, height: 40)
+                .background {
+                    if snapToGrid {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Brand.accent.opacity(0.12))
+                            .padding(4)
+                    }
+                }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Snap to grid")
+        .accessibilityValue(snapToGrid ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityHint("Moves land on a two-foot grid while on")
     }
 
     private func zoomButton(icon: String,
@@ -1332,6 +1559,7 @@ struct FloorPlanView: View {
                 .font(.system(size: 16, weight: .heavy))
                 .foregroundStyle(Brand.textPrimary)
                 .frame(width: 40, height: 40)
+                .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         }
         .accessibilityLabel(accessibility)
@@ -1418,6 +1646,7 @@ struct FloorPlanView: View {
                                             isSuccess: true) }
         Task {
             await store.assignWithUndo(guest, toTable: table.id)
+            if store.errorMessage == nil { assignTick &+= 1 }
             onFinishAssigning?()
         }
     }
@@ -1767,7 +1996,9 @@ private extension View {
 
 /// A single table rendered on the floor plan: title, occupancy, capacity ring for
 /// round tables, and seat dots. In assign mode, open seats glow and full tables dim.
-struct TableNodeView: View {
+/// Equatable so the canvas can wrap it in `.equatable()`: a drag re-evaluates
+/// the whole canvas body every frame, and only the dragged node's inputs change.
+struct TableNodeView: View, Equatable {
     let table: SeatingTable
     let occupancy: Int
     let isOverCapacity: Bool
@@ -1779,9 +2010,26 @@ struct TableNodeView: View {
     /// True while a two-finger twist is driving the angle — the rotation must
     /// track the fingers 1:1, so the settle animation is suppressed.
     var liveRotating: Bool = false
+    /// Names of the guests seated here, in seat order (last name, then first).
+    /// Empty when the canvas is too zoomed out for initials to be legible;
+    /// non-empty swaps filled seat dots for initials chips.
+    var seatedNames: [String] = []
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    nonisolated static func == (lhs: TableNodeView, rhs: TableNodeView) -> Bool {
+        lhs.table == rhs.table
+            && lhs.occupancy == rhs.occupancy
+            && lhs.isOverCapacity == rhs.isOverCapacity
+            && lhs.isSelected == rhs.isSelected
+            && lhs.assigning == rhs.assigning
+            && lhs.openSeats == rhs.openSeats
+            && lhs.pulse == rhs.pulse
+            && lhs.isColliding == rhs.isColliding
+            && lhs.liveRotating == rhs.liveRotating
+            && lhs.seatedNames == rhs.seatedNames
+    }
 
     private var capacity: Int { table.capacity ?? 0 }
     private var isRound: Bool { (table.shape ?? .circle) == .circle || (table.shape ?? .circle) == .oval }
@@ -1803,14 +2051,20 @@ struct TableNodeView: View {
         .opacity(assigning && isFull ? 0.45 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(assigning
                            ? (isFull ? "Full, no open seats" : "Double tap to seat the guest here")
-                           : "Double tap to select")
+                           : (isSelected ? "Double tap to manage seating" : "Double tap to select"))
     }
 
     private var accessibilityText: String {
         guard capacity > 0 else { return "\(table.name), \(occupancy) seated" }
-        return "\(table.name), \(occupancy) of \(capacity) seated"
+        let open = max(0, capacity - occupancy)
+        if occupancy > capacity {
+            return "\(table.name), \(occupancy) of \(capacity) seats filled, \(occupancy - capacity) over capacity"
+        }
+        return "\(table.name), \(occupancy) of \(capacity) seats filled, \(open) open"
     }
 
     // MARK: Body
@@ -1883,7 +2137,7 @@ struct TableNodeView: View {
             if assigning {
                 Text(isFull ? "Full" : "\(openSeats) open")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(isFull ? Brand.slate400 : Brand.success)
+                    .foregroundStyle(isFull ? Brand.textSecondary : Brand.successText)
             } else if capacity > 0 {
                 Text("\(occupancy)/\(capacity)")
                     .font(.system(size: 13, weight: .semibold))
@@ -2004,6 +2258,12 @@ struct TableNodeView: View {
                 }
                 .offset(x: dx, y: dy)
             }
+        } else if filled, index < seatedNames.count {
+            // Zoomed in: the seated guest's initials, in their avatar color,
+            // so "who's at Table 3" reads straight off the plan.
+            InitialsAvatar(name: seatedNames[index], size: 24)
+                .overlay(Circle().strokeBorder(seatRingColor, lineWidth: 1.5))
+                .offset(x: dx, y: dy)
         } else {
             // Chair: a hollow mauve ring. A seated chair fills its center with a
             // solid plum dot — mirrors the web floor plan.
@@ -2029,11 +2289,15 @@ struct TableNodeView: View {
 /// name chip in its corner. The large fill is non-interactive so the canvas
 /// still pans over it; only the chip is hittable, so the drag / tap / context
 /// gestures attached by `roomLayer` effectively bind to the chip.
-struct RoomNodeView: View {
+struct RoomNodeView: View, Equatable {
     let room: FloorPlanRoom
     var isSelected: Bool = false
 
     @Environment(\.colorScheme) private var scheme
+
+    nonisolated static func == (lhs: RoomNodeView, rhs: RoomNodeView) -> Bool {
+        lhs.room == rhs.room && lhs.isSelected == rhs.isSelected
+    }
 
     var body: some View {
         let fill = scheme == .dark ? Color.white.opacity(0.03) : Color.hex("#E5E7EB").opacity(0.5)
@@ -2047,7 +2311,9 @@ struct RoomNodeView: View {
             .allowsHitTesting(false)
             .overlay(alignment: .topLeading) { nameChip }
             .accessibilityElement()
-            .accessibilityLabel("Room \(room.name)")
+            .accessibilityLabel("Room \(room.name), \(TableScale.feetLabel(room.widthFt)) by \(TableScale.feetLabel(room.heightFt)) feet")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var nameChip: some View {
@@ -2068,7 +2334,7 @@ struct RoomNodeView: View {
 /// A decorative object (stage, dance floor, bar, …): a filled, outlined shape
 /// with a centered name label. Rotates about its center like a table; turns red
 /// while a drag has it overlapping another item.
-struct ShapeNodeView: View {
+struct ShapeNodeView: View, Equatable {
     let shape: DecorShape
     var isColliding: Bool = false
     var isSelected: Bool = false
@@ -2076,6 +2342,13 @@ struct ShapeNodeView: View {
     var liveRotating: Bool = false
 
     @Environment(\.colorScheme) private var scheme
+
+    nonisolated static func == (lhs: ShapeNodeView, rhs: ShapeNodeView) -> Bool {
+        lhs.shape == rhs.shape
+            && lhs.isColliding == rhs.isColliding
+            && lhs.isSelected == rhs.isSelected
+            && lhs.liveRotating == rhs.liveRotating
+    }
 
     var body: some View {
         ZStack {
@@ -2093,6 +2366,8 @@ struct ShapeNodeView: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(shape.name), decoration")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     @ViewBuilder

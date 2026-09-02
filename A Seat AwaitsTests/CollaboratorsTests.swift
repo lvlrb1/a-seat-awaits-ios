@@ -119,7 +119,7 @@ struct CollaborationPlanPolicyTests {
         let on = CollaborationPlanPolicy.resolve(subscriptionTier: "signature", subscriptionStatus: "active")
         let off = CollaborationPlanPolicy.resolve(subscriptionTier: "free", subscriptionStatus: "active")
         #expect(on.availabilityMessage == "Collaboration is enabled on your plan.")
-        #expect(off.availabilityMessage == "Collaboration is included with a Premium Pass or the Pro subscription.")
+        #expect(off.availabilityMessage == "Collaboration is included with a Premium Event Pass, or with Pro.")
     }
 
     @Test("A Premium pass grants collaboration to an otherwise-free account")

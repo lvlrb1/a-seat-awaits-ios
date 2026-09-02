@@ -51,7 +51,7 @@ struct QRCodeView: View {
         .sheet(item: $store.shareItem) { payload in
             ShareSheet(items: [
                 QRCodeShareItem(fileURL: payload.fileURL,
-                                title: "Find your table at \(payload.eventName)"),
+                                title: "Find Your Table at \(payload.eventName)"),
                 payload.link
             ])
         }
@@ -63,10 +63,10 @@ struct QRCodeView: View {
     private var header: some View {
         VStack(spacing: 6) {
             Text("Scan to find your seat")
-                .font(.system(size: 15))
+                .scaledFont(size: 15)
                 .foregroundStyle(Brand.textSecondary)
             Text(store.eventName)
-                .font(.system(size: 22, weight: .bold))
+                .scaledFont(size: 22, weight: .bold)
                 .tracking(-0.2)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Brand.textPrimary)
@@ -90,7 +90,7 @@ struct QRCodeView: View {
         case .failed(let message):
             VStack(spacing: 14) {
                 notice(icon: "exclamationmark.triangle.fill",
-                       title: "Couldn’t create the QR code",
+                       title: "Couldn't create the QR code",
                        message: message)
                 Button("Retry") { Task { await store.retry() } }
                     .buttonStyle(.secondaryOutline)
@@ -132,7 +132,7 @@ struct QRCodeView: View {
 
     private func linkLabel(_ url: URL) -> some View {
         Text(url.absoluteString)
-            .font(.system(size: 12, weight: .medium))
+            .scaledFont(size: 12, weight: .medium)
             .foregroundStyle(Brand.textSecondary)
             .multilineTextAlignment(.center)
             .lineLimit(2)
@@ -158,7 +158,7 @@ struct QRCodeView: View {
             if let url = store.shareURL {
                 Link(destination: url) {
                     Text("Open Guest Page")
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(size: 15, weight: .semibold)
                         .foregroundStyle(Brand.accent)
                 }
                 .padding(.top, 2)
@@ -166,8 +166,8 @@ struct QRCodeView: View {
 
             if let feedback = store.copyFeedback {
                 Text(feedback)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Brand.success)
+                    .scaledFont(size: 13, weight: .semibold)
+                    .foregroundStyle(Brand.successText)
                     .transition(.opacity)
                     .accessibilityHidden(true) // already announced via VoiceOver
             }
@@ -176,8 +176,8 @@ struct QRCodeView: View {
     }
 
     private var privacyNote: some View {
-        Text("Anyone with this code or link can search for a guest’s seating assignment. Share it only with your event attendees.")
-            .font(.system(size: 12))
+        Text("Anyone with this code or link can search for a guest's seating assignment. Share it only with your event attendees.")
+            .scaledFont(size: 12)
             .foregroundStyle(Brand.textSecondary)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
@@ -187,13 +187,14 @@ struct QRCodeView: View {
     private func notice(icon: String, title: String, message: String) -> some View {
         VStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 26, weight: .semibold))
+                .scaledFont(size: 26, weight: .semibold)
                 .foregroundStyle(Brand.accent)
+                .accessibilityHidden(true)
             Text(title)
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text(message)
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)

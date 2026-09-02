@@ -95,7 +95,7 @@ struct ManageAccountView: View {
                     .frame(width: 46, height: 46)
                     .overlay(
                         Image(systemName: "crown.fill")
-                            .font(.system(size: 18, weight: .semibold))
+                            .scaledFont(size: 18, weight: .semibold)
                             .foregroundStyle(.white))
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -104,7 +104,7 @@ struct ManageAccountView: View {
                     } else {
                         TitleBadgeRow {
                             Text(planTitle)
-                                .font(.system(size: 16, weight: .bold))
+                                .scaledFont(size: 16, weight: .bold)
                                 .foregroundStyle(Brand.textPrimary)
                         } badge: {
                             if !policy.isFree {
@@ -112,15 +112,15 @@ struct ManageAccountView: View {
                             }
                         }
                         Text(planSubtitle)
-                            .font(.system(size: 13))
+                            .scaledFont(size: 13)
                             .foregroundStyle(Brand.textSecondary)
                             .lineLimit(1)
                         if let passLine = passSummaryLine {
                             HStack(spacing: 4) {
                                 Image(systemName: "ticket")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .scaledFont(size: 10, weight: .semibold)
                                 Text(passLine)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .scaledFont(size: 12, weight: .semibold)
                                     .lineLimit(1)
                             }
                             .foregroundStyle(Brand.accent)
@@ -131,18 +131,20 @@ struct ManageAccountView: View {
                 Spacer(minLength: 8)
 
                 Text("Manage")
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(size: 13, weight: .bold)
                     .lineLimit(1)
                     .fixedSize()
                     .foregroundStyle(Brand.accent)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(size: 13, weight: .bold)
                     .foregroundStyle(Brand.slate300)
+                    .accessibilityHidden(true)
             }
             .padding(16)
             .brandCard(radius: 18)
         }
         .buttonStyle(.plain)
+        .accessibilityHint("Opens Plan & Billing")
         .offset(y: -36)
         .padding(.bottom, -36)
     }
@@ -203,7 +205,7 @@ struct ManageAccountView: View {
 
                 AccountRowLabel(icon: "checkmark.shield",
                                 title: "Sign-in method",
-                                value: snapshot?.authUser.providerLabel ?? "—",
+                                value: snapshot?.authUser.providerLabel ?? "Not set",
                                 showsChevron: false)
 
                 if let since = AccountDate.medium(snapshot?.createdDate) {
@@ -336,6 +338,14 @@ struct ManageAccountView: View {
                 AccountButtonRow(icon: "doc.text", title: "Terms of Service") {
                     openURL(AccountLinks.termsOfService)
                 }
+                // Passive rating entry point (never a prompt). Hidden until the
+                // App Store ID is filled in from App Store Connect.
+                if let reviewURL = AppStoreIDs.writeReviewURL {
+                    AccountRowDivider()
+                    AccountButtonRow(icon: "star", title: "Rate A Seat Awaits") {
+                        openURL(reviewURL)
+                    }
+                }
             }
         }
     }
@@ -345,7 +355,7 @@ struct ManageAccountView: View {
     private var signOutSection: some View {
         AccountCardGroup {
             AccountButtonRow(icon: "rectangle.portrait.and.arrow.right",
-                             title: "Log Out",
+                             title: "Sign Out",
                              tint: Brand.danger,
                              showsChevron: false) {
                 showingSignOutConfirm = true
@@ -375,11 +385,11 @@ struct ManageAccountView: View {
     private var footer: some View {
         VStack(spacing: 4) {
             Text("A Seat Awaits")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 13, weight: .semibold)
+                .foregroundStyle(Brand.textSecondary)
             Text(Self.versionString)
-                .font(.system(size: 12))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 12)
+                .foregroundStyle(Brand.textSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
@@ -387,8 +397,8 @@ struct ManageAccountView: View {
 
     private static var versionString: String {
         let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "—"
-        let build = info?["CFBundleVersion"] as? String ?? "—"
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
         return "Version \(version) (\(build))"
     }
 }

@@ -82,7 +82,7 @@ struct EditParsedGuestSheet: View {
                     } header: {
                         Text("Plus-one")
                     } footer: {
-                        Text("Name them to add a second guest in the same household, or leave blank to keep \"\(row.guest.plusOneHint ?? "")\" as a note.")
+                        Text("Name them to add a second guest in the same household, or leave blank to keep “\(row.guest.plusOneHint ?? "")” as a note.")
                     }
                 }
 
@@ -95,7 +95,7 @@ struct EditParsedGuestSheet: View {
                     }
                 }
             }
-            .navigationTitle("Edit guest")
+            .navigationTitle("Edit Guest")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

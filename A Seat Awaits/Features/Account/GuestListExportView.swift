@@ -62,7 +62,7 @@ struct GuestListExportView: View {
 
     private var eventsList: some View {
         VStack(spacing: 8) {
-            AccountSectionHeader(title: "Choose an event")
+            AccountSectionHeader(title: "Choose an Event")
             AccountCardGroup {
                 ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
                     if index > 0 { AccountRowDivider(inset: 16) }
@@ -79,12 +79,12 @@ struct GuestListExportView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(event.name)
-                        .font(.system(size: 16, weight: .semibold))
+                        .scaledFont(size: 16, weight: .semibold)
                         .foregroundStyle(Brand.textPrimary)
                         .multilineTextAlignment(.leading)
                     if let date = event.displayDate {
                         Text(date)
-                            .font(.system(size: 13))
+                            .scaledFont(size: 13)
                             .foregroundStyle(Brand.textSecondary)
                     }
                 }
@@ -93,7 +93,7 @@ struct GuestListExportView: View {
                     ProgressView()
                 } else {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
+                        .scaledFont(size: 16, weight: .semibold)
                         .foregroundStyle(Brand.accent)
                 }
             }
@@ -107,13 +107,14 @@ struct GuestListExportView: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             Image(systemName: "calendar.badge.exclamationmark")
-                .font(.system(size: 32))
-                .foregroundStyle(Brand.slate300)
+                .scaledFont(size: 32)
+                .foregroundStyle(Brand.textSecondary)
+                .accessibilityHidden(true)
             Text("No events yet")
-                .font(.system(size: 17, weight: .bold))
+                .scaledFont(size: 17, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text("Create an event and add guests, then export the list here.")
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
         }
@@ -124,10 +125,10 @@ struct GuestListExportView: View {
     private func errorState(_ message: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 30))
+                .scaledFont(size: 30)
                 .foregroundStyle(Brand.warning)
             Text(message)
-                .font(.system(size: 15))
+                .scaledFont(size: 15)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
             Button("Try Again") { Task { await loadEvents() } }

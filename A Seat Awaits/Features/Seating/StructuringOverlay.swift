@@ -41,12 +41,12 @@ struct StructuringOverlay: View {
 
                 VStack(spacing: 6) {
                     Text("Structuring your guest list")
-                        .font(.system(size: 18, weight: .bold))
+                        .scaledFont(size: 18, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                         .multilineTextAlignment(.center)
 
                     Text(messages[messageIndex])
-                        .font(.system(size: 14, weight: .medium))
+                        .scaledFont(size: 14, weight: .medium)
                         .foregroundStyle(Brand.textSecondary)
                         .id(messageIndex)
                         .transition(reduceMotion
@@ -112,7 +112,7 @@ struct StructuringOverlay: View {
                 .shadow(color: Brand.plum.opacity(0.5), radius: 12, x: 0, y: 8)
 
             Image(systemName: "sparkles")
-                .font(.system(size: 30, weight: .bold))
+                .scaledFont(size: 30, weight: .bold)
                 .foregroundStyle(.white)
                 .scaleEffect(reduceMotion ? 1 : (pulse ? 1.06 : 0.94))
                 .animation(reduceMotion ? nil
@@ -129,7 +129,7 @@ struct StructuringOverlay: View {
 
     private func twinkle(dx: CGFloat, dy: CGFloat, size: CGFloat, delay: Double) -> some View {
         Image(systemName: "sparkle")
-            .font(.system(size: size, weight: .semibold))
+            .scaledFont(size: size, weight: .semibold)
             .foregroundStyle(Brand.lilac)
             .opacity(reduceMotion ? 0.7 : (pulse ? 0.95 : 0.25))
             .scaleEffect(reduceMotion ? 1 : (pulse ? 1.0 : 0.6))

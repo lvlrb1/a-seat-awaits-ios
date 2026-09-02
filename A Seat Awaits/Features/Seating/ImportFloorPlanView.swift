@@ -23,6 +23,7 @@ struct ImportFloorPlanView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum Step { case upload, analyzing, review }
 
@@ -145,22 +146,23 @@ struct ImportFloorPlanView: View {
                     .fill(Brand.plumChipFillSoft)
                     .frame(width: 64, height: 64)
                 Image(systemName: "sparkles")
-                    .font(.system(size: 26, weight: .semibold))
+                    .scaledFont(size: 26, weight: .semibold)
                     .foregroundStyle(Brand.purple)
             }
+            .accessibilityHidden(true)
             Text("Available on paid plans")
-                .font(.system(size: 17, weight: .bold))
+                .scaledFont(size: 17, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
-            Text("AI floor plan import is included with Standard and Premium Event Passes, and with Pro. Upload a photo of your venue's floor plan and we'll rebuild the room for you.")
-                .font(.system(size: 13))
+            Text("AI floor plan import is included with a Standard or Premium Event Pass, or with Pro. Upload a photo of your venue's floor plan and we'll rebuild the room for you.")
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
                 showingPaywall = true
             } label: {
-                Label("View plans", systemImage: "sparkles")
-                    .font(.system(size: 15, weight: .bold))
+                Label("View Plans", systemImage: "sparkles")
+                    .scaledFont(size: 15, weight: .bold)
             }
             .buttonStyle(.primaryBrand)
             .padding(.top, 4)
@@ -174,7 +176,7 @@ struct ImportFloorPlanView: View {
     private var uploadContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Upload a photo, scan, or PDF of your venue's floor plan and we'll rebuild the room for you. We'll do our best to get it right, and everything's easy to adjust after.")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -183,7 +185,7 @@ struct ImportFloorPlanView: View {
 
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.warningText)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 12)
@@ -191,7 +193,7 @@ struct ImportFloorPlanView: View {
 
             Label("Best results: a straight-on photo or scan with a scale bar or written dimensions.",
                   systemImage: "info.circle")
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
@@ -216,15 +218,15 @@ struct ImportFloorPlanView: View {
                             .fill(Brand.plumChipFillSoft)
                             .frame(width: 64, height: 64)
                         Image(systemName: "doc.richtext")
-                            .font(.system(size: 26, weight: .semibold))
+                            .scaledFont(size: 26, weight: .semibold)
                             .foregroundStyle(Brand.purple)
                     }
                     Text("PDF ready to analyze")
-                        .font(.system(size: 12))
+                        .scaledFont(size: 12)
                         .foregroundStyle(Brand.textSecondary)
                 }
                 Text(picked.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
                     .lineLimit(1)
                 pickButtons(compact: true)
@@ -234,14 +236,14 @@ struct ImportFloorPlanView: View {
                         .fill(Brand.plumChipFillSoft)
                         .frame(width: 56, height: 56)
                     Image(systemName: "photo.badge.arrow.down")
-                        .font(.system(size: 22, weight: .semibold))
+                        .scaledFont(size: 22, weight: .semibold)
                         .foregroundStyle(Brand.purple)
                 }
                 Text("Add your floor plan")
-                    .font(.system(size: 15, weight: .bold))
+                    .scaledFont(size: 15, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                 Text("PNG, JPEG, WebP, or PDF · up to 10 MB\nPhotos and scans work great")
-                    .font(.system(size: 12))
+                    .scaledFont(size: 12)
                     .foregroundStyle(Brand.textSecondary)
                     .multilineTextAlignment(.center)
                 pickButtons(compact: false)
@@ -266,7 +268,7 @@ struct ImportFloorPlanView: View {
         HStack(spacing: 10) {
             PhotosPicker(selection: $photoItem, matching: .images) {
                 Label(compact ? "Photos" : "Choose Photo", systemImage: "photo")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .padding(.horizontal, 14)
                     .frame(height: 38)
                     .background(Brand.primaryFill,
@@ -277,7 +279,7 @@ struct ImportFloorPlanView: View {
                 showFileImporter = true
             } label: {
                 Label(compact ? "Files" : "Browse Files", systemImage: "folder")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .padding(.horizontal, 14)
                     .frame(height: 38)
                     .overlay(Capsule().strokeBorder(Brand.accent, lineWidth: 1.5))
@@ -299,18 +301,19 @@ struct ImportFloorPlanView: View {
                     .trim(from: 0, to: 0.28)
                     .stroke(Brand.purple, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .frame(width: 64, height: 64)
-                    .rotationEffect(.degrees(step == .analyzing ? 360 : 0))
-                    .animation(.linear(duration: 1.1).repeatForever(autoreverses: false),
+                    .rotationEffect(.degrees(step == .analyzing && !reduceMotion ? 360 : 0))
+                    .animation(reduceMotion ? nil
+                               : .linear(duration: 1.1).repeatForever(autoreverses: false),
                                value: step == .analyzing)
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 20, weight: .semibold))
+                    .scaledFont(size: 20, weight: .semibold)
                     .foregroundStyle(Brand.purple)
             }
             Text("Reading your floor plan…")
-                .font(.system(size: 15, weight: .bold))
+                .scaledFont(size: 15, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text(Self.analyzingPhrases[analyzingPhraseIndex])
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textSecondary)
                 .transition(.opacity)
                 .id(analyzingPhraseIndex)
@@ -328,6 +331,9 @@ struct ImportFloorPlanView: View {
                 }
             }
             .frame(width: 200, height: 6)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Analyzing progress")
+            .accessibilityValue("\(Int(analyzingProgress)) percent")
         }
         .padding(.vertical, 8)
     }
@@ -340,16 +346,17 @@ struct ImportFloorPlanView: View {
 
             detectedCard(result)
 
-            Button("Use a different image") {
+            Button("Use a Different Image") {
                 startOver()
             }
-            .font(.system(size: 13, weight: .semibold))
+            .scaledFont(size: 13, weight: .semibold)
             .foregroundStyle(Brand.accent)
             .underline()
+            .frame(minHeight: 44)
 
             Label("Our AI reads your plan as faithfully as it can, but nobody knows your venue like you do. Give the layout a quick once-over after importing. Every table and fixture can be dragged, resized, and renamed until it's just right.",
                   systemImage: "info.circle")
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -435,24 +442,24 @@ struct ImportFloorPlanView: View {
         let lowConfidence = result.confidence < 0.6
         return VStack(alignment: .leading, spacing: 8) {
             Text("DETECTED")
-                .font(.system(size: 11, weight: .semibold))
+                .scaledFont(size: 11, weight: .semibold)
                 .kerning(0.8)
                 .foregroundStyle(Brand.textSecondary)
             Text(result.roomName)
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(size: 15, weight: .semibold)
                 .foregroundStyle(Brand.textPrimary)
             Text(detectedSummary(result, noScale: noScale))
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
             Text(fixtureSummary(result))
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if result.tallyStatus == "match" {
                 Label("Seat totals match the tally written on the plan.",
                       systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(size: 12, weight: .medium)
                     .foregroundStyle(Brand.successText)
                     .fixedSize(horizontal: false, vertical: true)
             } else if result.tallyStatus == "mismatch", let note = result.tallyNote {
@@ -461,7 +468,7 @@ struct ImportFloorPlanView: View {
 
             if result.crossedOutCount > 0 {
                 Text("\(result.crossedOutCount) crossed-out table\(result.crossedOutCount == 1 ? "" : "s") on the plan excluded.")
-                    .font(.system(size: 12))
+                    .scaledFont(size: 12)
                     .foregroundStyle(Brand.textSecondary)
             }
             if result.plan.tables.isEmpty {
@@ -487,7 +494,7 @@ struct ImportFloorPlanView: View {
 
     private func warningLabel(_ text: String) -> some View {
         Label(text, systemImage: "exclamationmark.triangle.fill")
-            .font(.system(size: 12, weight: .medium))
+            .scaledFont(size: 12, weight: .medium)
             .foregroundStyle(Brand.warningText)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -534,7 +541,7 @@ struct ImportFloorPlanView: View {
                             Text("Adding…")
                         } else {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 17, weight: .bold))
+                                .scaledFont(size: 17, weight: .bold)
                             Text("Add to My Floor Plan")
                         }
                     }
@@ -549,7 +556,7 @@ struct ImportFloorPlanView: View {
                             Text("Analyzing…")
                         } else {
                             Image(systemName: "wand.and.stars")
-                                .font(.system(size: 17, weight: .bold))
+                                .scaledFont(size: 17, weight: .bold)
                             Text("Analyze Floor Plan")
                         }
                     }

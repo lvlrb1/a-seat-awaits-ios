@@ -88,12 +88,7 @@ struct PaywallView: View {
         .task {
             // Concurrent: the product catalog must not wait behind the
             // account's Supabase round-trips.
-            async let productLoad: Void = {
-                if let subscriptions,
-                   subscriptions.products.isEmpty || subscriptions.productLoadErrorMessage != nil {
-                    await subscriptions.loadProducts()
-                }
-            }()
+            async let productLoad: Void = loadProductsIfNeeded()
             await account.load()
             _ = await productLoad
         }
@@ -115,6 +110,13 @@ struct PaywallView: View {
         }
     }
 
+    /// Loads the App Store catalog unless it's already cached and healthy.
+    private func loadProductsIfNeeded() async {
+        guard let subscriptions,
+              subscriptions.products.isEmpty || subscriptions.productLoadErrorMessage != nil else { return }
+        await subscriptions.loadProducts()
+    }
+
     // MARK: - Stripe subscribers (no purchase UI)
 
     /// Shown instead of any purchase UI when billing lives on the web. Neutral
@@ -122,14 +124,15 @@ struct PaywallView: View {
     private var webBillingNotice: some View {
         VStack(spacing: 14) {
             Image(systemName: "globe")
-                .font(.system(size: 34))
-                .foregroundStyle(Brand.slate300)
+                .scaledFont(size: 34)
+                .foregroundStyle(Brand.textSecondary)
+                .accessibilityHidden(true)
             Text("Your \(policy.planDisplayName) plan is billed through our website")
-                .font(.system(size: 17, weight: .bold))
+                .scaledFont(size: 17, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
                 .multilineTextAlignment(.center)
             Text("Plan changes and billing updates are managed where you subscribed. Changes are reflected here automatically.")
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
         }
@@ -188,10 +191,10 @@ struct PaywallView: View {
     private var passIntro: some View {
         VStack(spacing: 6) {
             Text("One pass, one event")
-                .font(.system(size: 20, weight: .bold))
+                .scaledFont(size: 20, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text("Pay once and plan your event start to finish. Your pass never expires.")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
         }
@@ -206,12 +209,12 @@ struct PaywallView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     TitleBadgeRow {
                         Text(tier.displayName)
-                            .font(.system(size: 18, weight: .bold))
+                            .scaledFont(size: 18, weight: .bold)
                             .foregroundStyle(Brand.textPrimary)
                     } badge: {
                         if isPopular {
                             Text("Most Popular")
-                                .font(.system(size: 10, weight: .bold))
+                                .scaledFont(size: 10, weight: .bold)
                                 .lineLimit(1)
                                 .fixedSize()
                                 .foregroundStyle(.white)
@@ -221,17 +224,17 @@ struct PaywallView: View {
                         }
                     }
                     Text(tier.tagline)
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 0) {
-                    Text(product?.displayPrice ?? "—")
-                        .font(.system(size: 20, weight: .bold))
+                    Text(product?.displayPrice ?? "…")
+                        .scaledFont(size: 20, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                     Text("one time")
-                        .font(.system(size: 11))
+                        .scaledFont(size: 11)
                         .foregroundStyle(Brand.textSecondary)
                 }
             }
@@ -268,10 +271,10 @@ struct PaywallView: View {
     private func upgradeIntro(from: PassTier) -> some View {
         VStack(spacing: 6) {
             Text("This event has a \(from.displayName)")
-                .font(.system(size: 18, weight: .bold))
+                .scaledFont(size: 18, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text("Upgrade in place and pay only the difference. Everything you've planned stays exactly as it is.")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
         }
@@ -284,20 +287,20 @@ struct PaywallView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(tier.displayName)
-                        .font(.system(size: 18, weight: .bold))
+                        .scaledFont(size: 18, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                     Text(tier.tagline)
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 0) {
-                    Text(product?.displayPrice ?? "—")
-                        .font(.system(size: 20, weight: .bold))
+                    Text(product?.displayPrice ?? "…")
+                        .scaledFont(size: 20, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                     Text("one time")
-                        .font(.system(size: 11))
+                        .scaledFont(size: 11)
                         .foregroundStyle(Brand.textSecondary)
                 }
             }
@@ -336,10 +339,10 @@ struct PaywallView: View {
         VStack(spacing: 12) {
             VStack(spacing: 4) {
                 Text("Planning events for a living?")
-                    .font(.system(size: 16, weight: .bold))
+                    .scaledFont(size: 16, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                 Text("One subscription for planners and venues running many events.")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -357,20 +360,20 @@ struct PaywallView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(tier.displayName)
-                        .font(.system(size: 18, weight: .bold))
+                        .scaledFont(size: 18, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                     Text(tier.tagline)
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 0) {
-                    Text(product?.displayPrice ?? "—")
-                        .font(.system(size: 20, weight: .bold))
+                    Text(product?.displayPrice ?? "…")
+                        .scaledFont(size: 20, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                     Text(selectedPeriod == .monthly ? "per month" : "per year")
-                        .font(.system(size: 11))
+                        .scaledFont(size: 11)
                         .foregroundStyle(Brand.textSecondary)
                 }
             }
@@ -380,10 +383,10 @@ struct PaywallView: View {
                 Text("Yearly").tag(AppleBillingPeriod.annual)
             }
             .pickerStyle(.segmented)
-            if selectedPeriod == .annual {
-                Text("2 months free with yearly billing")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Brand.success)
+            if selectedPeriod == .annual, let savings = annualSavings {
+                Text(savings.label)
+                    .scaledFont(size: 12, weight: .semibold)
+                    .foregroundStyle(Brand.successText)
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -412,15 +415,23 @@ struct PaywallView: View {
         .brandCard()
     }
 
+    /// Yearly-vs-monthly saving for Pro, derived from live App Store prices.
+    /// Nil (and hidden) until both products have loaded.
+    private var annualSavings: AnnualSavings? {
+        AnnualSavings.compute(monthly: subscriptions?.product(for: .elite, period: .monthly)?.price,
+                              annual: subscriptions?.product(for: .elite, period: .annual)?.price)
+    }
+
     // MARK: - Shared pieces
 
     private func featureLine(_ label: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.success)
+                .accessibilityHidden(true)
             Text(label)
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textPrimary)
         }
     }
@@ -503,8 +514,8 @@ struct PaywallView: View {
             }
 
             Text(footerDisclosure)
-                .font(.system(size: 11))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 11)
+                .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 4) {
@@ -520,7 +531,7 @@ struct PaywallView: View {
     private func footerLink(_ title: String, url: URL) -> some View {
         Button { openURL(url) } label: {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(size: 12, weight: .semibold)
                 .foregroundStyle(Brand.accent)
                 .padding(.horizontal, 6)
                 .frame(minHeight: 44)

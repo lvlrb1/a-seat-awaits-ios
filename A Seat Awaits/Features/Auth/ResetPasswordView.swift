@@ -34,16 +34,16 @@ struct ResetPasswordView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if didReset {
                         Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 40, weight: .semibold))
+                            .scaledFont(size: 40, weight: .semibold)
                             .foregroundStyle(Brand.successText)
                             .padding(.top, 40)
                         Text("Password updated")
-                            .font(.system(size: 26, weight: .bold))
+                            .scaledFont(size: 26, weight: .bold)
                             .tracking(-0.5)
                             .foregroundStyle(Brand.textPrimary)
                             .padding(.top, 20)
                         Text("Your password has been changed. You're all set.")
-                            .font(.system(size: 15))
+                            .scaledFont(size: 15)
                             .foregroundStyle(Brand.textSecondary)
                             .padding(.top, 8)
                         Button("Continue") { onDone() }
@@ -51,12 +51,12 @@ struct ResetPasswordView: View {
                             .padding(.top, 28)
                     } else {
                         Text("Set a new password")
-                            .font(.system(size: 26, weight: .bold))
+                            .scaledFont(size: 26, weight: .bold)
                             .tracking(-0.5)
                             .foregroundStyle(Brand.textPrimary)
                             .padding(.top, 40)
                         Text("Choose a new password for your account. Use at least 6 characters.")
-                            .font(.system(size: 15))
+                            .scaledFont(size: 15)
                             .lineSpacing(3)
                             .foregroundStyle(Brand.textSecondary)
                             .padding(.top, 8)
@@ -95,20 +95,20 @@ struct ResetPasswordView: View {
                             }
 
                             Toggle("Show password", isOn: $showPassword)
-                                .font(.system(size: 14))
+                                .scaledFont(size: 14)
                                 .tint(Brand.plum)
                         }
                         .padding(.top, 24)
 
                         if !confirm.isEmpty && password != confirm {
                             Label("Passwords don't match.", systemImage: "exclamationmark.circle.fill")
-                                .font(.system(size: 13, weight: .medium))
+                                .scaledFont(size: 13, weight: .medium)
                                 .foregroundStyle(Brand.danger)
                                 .padding(.top, 12)
                         }
                         if let errorMessage {
                             Label(errorMessage, systemImage: "exclamationmark.circle.fill")
-                                .font(.system(size: 13, weight: .medium))
+                                .scaledFont(size: 13, weight: .medium)
                                 .foregroundStyle(Brand.danger)
                                 .padding(.top, 12)
                         }
@@ -119,7 +119,7 @@ struct ResetPasswordView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 if isSaving { ProgressView().tint(.white) }
-                                Text("Update password")
+                                Text("Update Password")
                             }
                         }
                         .buttonStyle(.primaryBrand)
@@ -146,7 +146,8 @@ struct ResetPasswordView: View {
             _ = try await supabase.updateAuthUser(password: password)
             didReset = true
         } catch {
-            errorMessage = (error as? SupabaseError)?.errorDescription ?? error.localizedDescription
+            guard !FriendlyError.isCancellation(error) else { return }
+            errorMessage = FriendlyError.message(for: error)
         }
     }
 }

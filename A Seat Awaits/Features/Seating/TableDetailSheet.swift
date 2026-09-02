@@ -64,17 +64,27 @@ struct TableDetailSheet: View {
         .sheet(isPresented: $showingEdit) {
             AddTableView(store: store, editing: t)
         }
-        .sheet(isPresented: $showingAssign) {
+        .sheet(isPresented: $showingAssign, onDismiss: { store.undo.extend() }) {
             AssignGuestsSheet(store: store, table: t)
         }
         .confirmationDialog("Delete \(t.name)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("Delete table", role: .destructive) {
-                Task { await store.deleteTable(table); dismiss() }
-            }
+            Button("Delete Table", role: .destructive) { deleteTable() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Guests at this table will become unassigned.")
+            Text("\(seated.count) guest\(seated.count == 1 ? "" : "s") seated here will become unassigned. You can undo for a few seconds.")
         }
+    }
+
+    /// An empty table deletes straight away (undo is the safety net); one with
+    /// people at it asks first.
+    private func requestDelete() {
+        if seated.isEmpty { deleteTable() } else { confirmingDelete = true }
+    }
+
+    private func deleteTable() {
+        let target = t
+        dismiss()
+        Task { await store.deleteTableWithUndo(target) }
     }
 
     // MARK: - Top bar (Close + Delete)
@@ -86,22 +96,27 @@ struct TableDetailSheet: View {
         HStack {
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(size: 14, weight: .semibold)
                     .foregroundStyle(Brand.textSecondary)
                     .frame(width: 32, height: 32)
                     .background(Brand.control, in: Circle())
+                    // 32pt visual, 44pt hit target.
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Close")
 
             Spacer()
 
             if canEdit {
-                Button(role: .destructive) { confirmingDelete = true } label: {
+                Button(role: .destructive) { requestDelete() } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(size: 14, weight: .semibold)
                         .foregroundStyle(Brand.danger)
                         .frame(width: 32, height: 32)
                         .background(Brand.danger.opacity(0.1), in: Circle())
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Delete table")
             }
@@ -136,11 +151,11 @@ struct TableDetailSheet: View {
                 ProgressRing(progress: progress, size: 60, lineWidth: 6, showsPercent: false)
                 VStack(spacing: 0) {
                     Text("\(seated.count)")
-                        .font(.system(size: 18, weight: .heavy))
+                        .scaledFont(size: 18, weight: .heavy)
                         .foregroundStyle(Brand.textPrimary)
                     if capacity > 0 {
                         Text("of \(capacity)")
-                            .font(.system(size: 10, weight: .semibold))
+                            .scaledFont(size: 10, weight: .semibold)
                             .foregroundStyle(Brand.textSecondary)
                     }
                 }
@@ -148,7 +163,7 @@ struct TableDetailSheet: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(t.name)
-                    .font(.system(size: 22, weight: .bold))
+                    .scaledFont(size: 22, weight: .bold)
                     .tracking(-0.02 * 22)
                     .foregroundStyle(Brand.textPrimary)
                 HStack(spacing: 8) {
@@ -163,7 +178,7 @@ struct TableDetailSheet: View {
                         }
                     }
                     Text(summaryText)
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(size: 13, weight: .semibold)
                         .foregroundStyle(Brand.textSecondary)
                         .lineLimit(1)
                 }
@@ -199,10 +214,11 @@ struct TableDetailSheet: View {
     private func noteRow(_ note: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "note.text")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 13, weight: .semibold)
+                .foregroundStyle(Brand.textSecondary)
+                .accessibilityHidden(true)
             Text(note)
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .lineLimit(2)
         }
@@ -224,7 +240,7 @@ struct TableDetailSheet: View {
                                     Task { await store.assignWithUndo(guest, toTable: nil) }
                                 } label: {
                                     Text("Unseat")
-                                        .font(.system(size: 13, weight: .bold))
+                                        .scaledFont(size: 13, weight: .bold)
                                         .foregroundStyle(Brand.warningText)
                                 }
                             }
@@ -243,10 +259,17 @@ struct TableDetailSheet: View {
     /// primary actions must be easily discoverable, never buried in a scroll).
     private var assignCTABar: some View {
         VStack(spacing: 8) {
+            // Unseating from this sheet is undoable, but the workspace's
+            // snackbar sits under the sheet; show it here, above the CTA.
+            UndoSnackbarView(toast: store.undo)
+                // The snackbar carries its own 16pt side padding; pull it back
+                // out so it lines up with the CTA button below.
+                .padding(.horizontal, -16)
+                .animation(.snappy(duration: 0.25), value: store.undo.message)
             if isFull {
                 Text(isOver ? "Over capacity · \(seated.count) guests seated, \(capacity) seats"
                             : "Table full · assigning more will exceed capacity")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.warningText)
             }
             Button { showingAssign = true } label: {
@@ -272,14 +295,14 @@ struct TableDetailSheet: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .bold))
+            .scaledFont(size: 12, weight: .bold)
             .tracking(0.6)
             .foregroundStyle(Brand.textSecondary)
     }
 
     private func emptyHint(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 15))
+            .scaledFont(size: 15)
             .foregroundStyle(Brand.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -293,16 +316,16 @@ struct TableDetailSheet: View {
             InitialsAvatar(name: guest.name, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text(guest.name)
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(size: 16, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
                 if let group = guest.groupName, !group.isEmpty {
                     Text(group)
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textSecondary)
                 }
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(size: 13, weight: .semibold)
                         .foregroundStyle(Brand.warningText)
                 }
             }

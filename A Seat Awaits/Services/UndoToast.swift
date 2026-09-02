@@ -55,6 +55,20 @@ final class UndoToast {
         }
     }
 
+    /// Restarts the dismiss window for the toast that's already showing. Sheets
+    /// that fire an undoable action and immediately dismiss call this on
+    /// dismissal, so the snackbar (hidden beneath the sheet until then) gets
+    /// its full window once it's actually visible.
+    func extend(duration: TimeInterval = UndoToast.defaultDuration) {
+        guard message != nil else { return }
+        dismissTask?.cancel()
+        dismissTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled else { return }
+            self?.clear()
+        }
+    }
+
     /// Invokes the stored undo action and dismisses the toast.
     func undo() {
         let action = onUndo
@@ -81,7 +95,7 @@ struct UndoSnackbarView: View {
         if let message = toast.message {
             HStack(spacing: 12) {
                 Text(message)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(size: 14, weight: .semibold)
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -91,7 +105,7 @@ struct UndoSnackbarView: View {
                     toast.undo()
                 } label: {
                     Text(toast.actionTitle)
-                        .font(.system(size: 14, weight: .heavy))
+                        .scaledFont(size: 14, weight: .heavy)
                         .foregroundStyle(Brand.lilac)
                         .padding(.horizontal, 12)
                         .frame(height: 34)

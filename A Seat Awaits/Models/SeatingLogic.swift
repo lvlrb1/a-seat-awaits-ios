@@ -20,8 +20,8 @@ enum GuestSort: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .lastNameAZ: return "Last Name (A–Z)"
-        case .firstNameAZ: return "First Name (A–Z)"
+        case .lastNameAZ: return "Last Name (A to Z)"
+        case .firstNameAZ: return "First Name (A to Z)"
         case .group: return "Group"
         case .unassignedFirst: return "Unassigned First"
         case .newestAdded: return "Newest Added"
@@ -42,7 +42,7 @@ enum TableSort: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .nameAZ: return "Name (A–Z)"
+        case .nameAZ: return "Name (A to Z)"
         case .capacity: return "Seats (most first)"
         case .mostOpen: return "Most open"
         case .fullest: return "Fullest first"
@@ -79,12 +79,29 @@ struct EventStats: Equatable {
     }
 }
 
+/// A household filter keyed on the group's NAME. Imported guests usually carry
+/// only `group_name` (no linked `guest_groups` row), while guests created in
+/// the app carry a `group_id`, so a household matches on either: the name
+/// itself, or any group id known to have that name.
+nonisolated struct HouseholdFilter: Equatable, Sendable {
+    var name: String
+    var groupIds: Set<String> = []
+
+    func matches(_ guest: Guest) -> Bool {
+        if let groupName = guest.groupName, groupName == name { return true }
+        if let groupId = guest.groupId, groupIds.contains(groupId) { return true }
+        return false
+    }
+}
+
 enum SeatingLogic {
 
-    /// Filters guests by a free-text search, group, and table, then sorts them.
+    /// Filters guests by a free-text search, group, household, and table, then
+    /// sorts them.
     static func filterAndSort(_ guests: [Guest],
                               search: String = "",
                               groupId: String? = nil,
+                              household: HouseholdFilter? = nil,
                               tableId: String? = nil,
                               sort: GuestSort = .lastNameAZ) -> [Guest] {
         let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -96,11 +113,62 @@ enum SeatingLogic {
                 if !haystack.contains(trimmed) { return false }
             }
             if let groupId, guest.groupId != groupId { return false }
+            if let household, !household.matches(guest) { return false }
             if let tableId, guest.tableId != tableId { return false }
             return true
         }
 
         return sorted(filtered, by: sort)
+    }
+
+    /// Every distinct household name among the guests plus the event's named
+    /// groups, sorted for a chip row. Names are matched exactly (the same
+    /// string a guest carries), so the filter chip built from one always hits.
+    static func householdNames(guests: [Guest], groups: [GuestGroup]) -> [String] {
+        var names = Set(groups.map(\.name).filter { !$0.isEmpty })
+        for guest in guests {
+            if let name = guest.groupName?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+                names.insert(name)
+            }
+        }
+        return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    /// The household filter for a given name: the name plus every group id
+    /// carrying it, so id-linked and name-only guests land in the same bucket.
+    static func householdFilter(named name: String, groups: [GuestGroup]) -> HouseholdFilter {
+        HouseholdFilter(name: name, groupIds: Set(groups.filter { $0.name == name }.map(\.id)))
+    }
+
+    /// The party key a guest sorts into for "select the whole household":
+    /// the linked group id when present, else the bare group name. Nil for
+    /// guests with no household at all.
+    static func partyKey(for guest: Guest) -> String? {
+        if let id = guest.groupId { return id }
+        if let name = guest.groupName?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+            return "name:\(name)"
+        }
+        return nil
+    }
+
+    /// The body of the "Remove {guest}?" confirmation: names what the guest
+    /// carries (a seat, dietary notes, notes) in one grammatical sentence, then
+    /// reminds the planner the delete can be undone. Empty details produce just
+    /// the undo reminder.
+    static func deletionMessage(tableName: String?, hasDietary: Bool, hasNotes: Bool) -> String {
+        let reminder = "You'll be able to undo for a few seconds."
+        let notesClause: String? = hasDietary ? "dietary notes on file"
+                                  : (hasNotes ? "notes on file" : nil)
+        switch (tableName, notesClause) {
+        case let (table?, clause?):
+            return "They're seated at \(table) and have \(clause). \(reminder)"
+        case let (table?, nil):
+            return "They're seated at \(table). \(reminder)"
+        case let (nil, clause?):
+            return "They have \(clause). \(reminder)"
+        case (nil, nil):
+            return reminder
+        }
     }
 
     static func sorted(_ guests: [Guest], by sort: GuestSort) -> [Guest] {
@@ -161,18 +229,53 @@ enum SeatingLogic {
                 return l == r ? byName(lhs, rhs) : l > r
             }
         case .mostOpen:
+            // One pass over the guests, then O(1) lookups in the comparator —
+            // the old per-compare filter was O(tables·log(tables)·guests).
+            let occupancy = occupancyByTable(guests: guests)
+            func open(_ t: SeatingTable) -> Int {
+                guard let capacity = t.capacity, capacity > 0 else { return .max }
+                return max(0, capacity - occupancy[t.id, default: 0])
+            }
             return tables.sorted { lhs, rhs in
-                let l = remainingSeats(lhs, guests: guests) ?? .max
-                let r = remainingSeats(rhs, guests: guests) ?? .max
+                let l = open(lhs), r = open(rhs)
                 return l == r ? byName(lhs, rhs) : l > r
             }
         case .fullest:
+            let occupancy = occupancyByTable(guests: guests)
+            func fill(_ t: SeatingTable) -> Double {
+                guard let capacity = t.capacity, capacity > 0 else { return 0 }
+                return Double(occupancy[t.id, default: 0]) / Double(capacity)
+            }
             return tables.sorted { lhs, rhs in
-                let l = fillFraction(lhs, guests: guests)
-                let r = fillFraction(rhs, guests: guests)
+                let l = fill(lhs), r = fill(rhs)
                 return l == r ? byName(lhs, rhs) : l > r
             }
         }
+    }
+
+    /// Seated-guest counts keyed by table id, computed in a single pass.
+    static func occupancyByTable(guests: [Guest]) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for guest in guests {
+            if let id = guest.tableId { counts[id, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    /// Guests seated at each table, in a stable "last name, then first name"
+    /// order — the order seat chips render in on the floor plan.
+    static func seatedGuestsByTable(guests: [Guest]) -> [String: [Guest]] {
+        var byTable: [String: [Guest]] = [:]
+        for guest in guests {
+            if let id = guest.tableId { byTable[id, default: []].append(guest) }
+        }
+        for (id, seated) in byTable {
+            byTable[id] = seated.sorted { lhs, rhs in
+                if lhs.lastNameKey == rhs.lastNameKey { return lhs.firstNameKey < rhs.firstNameKey }
+                return lhs.lastNameKey < rhs.lastNameKey
+            }
+        }
+        return byTable
     }
 
     /// How full a table is, 0...1+ (over-capacity exceeds 1). Uncapped → 0.

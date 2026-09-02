@@ -86,7 +86,7 @@ final class CollaboratorsStore {
 
             rebuild()
         } catch {
-            errorMessage = Self.message(for: error)
+            report(error)
         }
     }
 
@@ -208,7 +208,7 @@ final class CollaboratorsStore {
             rebuild()
         } catch {
             // No optimistic change was applied, so the previous role still shows.
-            errorMessage = Self.message(for: error)
+            report(error)
         }
     }
 
@@ -229,7 +229,7 @@ final class CollaboratorsStore {
             invitations.removeAll { $0.id == collaborator.id }
             rebuild()
         } catch {
-            errorMessage = Self.message(for: error)
+            report(error)
         }
     }
 
@@ -250,7 +250,7 @@ final class CollaboratorsStore {
             shares.removeAll { $0.id == collaborator.id }
             rebuild()
         } catch {
-            errorMessage = Self.message(for: error)
+            report(error)
         }
     }
 
@@ -294,15 +294,24 @@ final class CollaboratorsStore {
         "in.(\(ids.joined(separator: ",")))"
     }
 
+    /// Surfaces an error to the UI, except a cancellation (the screen was
+    /// dismissed mid-request), which is never shown.
+    private func report(_ error: Error) {
+        guard !FriendlyError.isCancellation(error) else { return }
+        errorMessage = Self.message(for: error)
+    }
+
     /// Maps a thrown error to a user-facing message (never silently swallowed).
+    /// Collaborator-specific guidance for the auth/permission cases; everything
+    /// else goes through `FriendlyError` so no raw server text reaches the UI.
     static func message(for error: Error) -> String {
         guard let supabaseError = error as? SupabaseError else {
-            return error.localizedDescription
+            return FriendlyError.message(for: error)
         }
         switch supabaseError {
         case .notAuthenticated:
             return "You're signed out. Please sign in again to manage collaborators."
-        case .http(let status, let message):
+        case .http(let status, _):
             switch status {
             case 401:
                 return "You're signed out. Please sign in again to manage collaborators."
@@ -311,16 +320,14 @@ final class CollaboratorsStore {
             case 404, 406:
                 return "That record was already removed. Pull to refresh."
             default:
-                return message.isEmpty ? "Something went wrong (HTTP \(status))." : message
+                return FriendlyError.message(for: error)
             }
         case .transport:
             return "Network problem. Check your connection and try again."
         case .offline:
             return "You're offline. Check your connection and try again."
-        case .decoding(let message):
-            return "Couldn't read the server response. \(message)"
-        case .notConfigured(let message):
-            return message
+        case .decoding, .notConfigured:
+            return FriendlyError.message(for: error)
         }
     }
 }

@@ -16,6 +16,37 @@ private nonisolated struct GuestSearchParams: Encodable, Sendable {
     let p_limit: Int
 }
 
+/// Accent- and case-tolerant name matching for the guest lookup, so "Jose"
+/// finds "José" and "renee" finds "Renée". Pure, so it is unit-tested.
+nonisolated enum GuestNameMatcher {
+    static let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+
+    /// Lowercased, accent-stripped, trimmed form for comparisons and grouping.
+    static func fold(_ text: String) -> String {
+        text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// True when the text carries any combining marks / accents.
+    static func hasDiacritics(_ text: String) -> Bool {
+        text.folding(options: .diacriticInsensitive, locale: .current) != text
+    }
+
+    /// Whether `name` contains `term`, ignoring case and accents.
+    static func matches(_ name: String, term: String) -> Bool {
+        matchRange(in: name, term: term) != nil
+    }
+
+    /// The range of `term` inside `name` (in `name`'s own indices), preferring a
+    /// match at the start of the name, then the first occurrence anywhere.
+    static func matchRange(in name: String, term: String) -> Range<String.Index>? {
+        let needle = term.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return nil }
+        return name.range(of: needle, options: options.union(.anchored))
+            ?? name.range(of: needle, options: options)
+    }
+}
+
 struct FindYourTableView: View {
     let supabase: SupabaseClient
 
@@ -27,6 +58,13 @@ struct FindYourTableView: View {
     @State private var isSearching = false
     @State private var errorMessage: String?
     @State private var searchTask: Task<Void, Never>?
+
+    /// True until the first events load completes, so the "No events yet"
+    /// state never flashes on the first frame.
+    @State private var isLoadingEvents = true
+    /// Set when the events load failed; renders a Retry state instead of the
+    /// misleading empty state.
+    @State private var eventsLoadError: String?
 
     @Environment(\.colorScheme) private var scheme
 
@@ -50,7 +88,11 @@ struct FindYourTableView: View {
         ZStack {
             HeroBackground()
 
-            if events.isEmpty {
+            if events.isEmpty && isLoadingEvents {
+                loadingState
+            } else if events.isEmpty, let eventsLoadError {
+                loadFailedState(eventsLoadError)
+            } else if events.isEmpty {
                 emptyState
             } else {
                 ScrollView {
@@ -68,7 +110,7 @@ struct FindYourTableView: View {
 
                         if let errorMessage {
                             Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 13, weight: .semibold))
+                                .scaledFont(size: 13, weight: .semibold)
                                 .foregroundStyle(.white)
                                 .padding(.top, 14)
                         }
@@ -92,6 +134,7 @@ struct FindYourTableView: View {
                     .readableWidth(Layout.formWidth)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .refreshable { await loadEvents() }
             }
         }
         .preferredColorScheme(nil)
@@ -116,7 +159,7 @@ struct FindYourTableView: View {
 
             if let name = selectedEvent?.name {
                 Text(name.uppercased())
-                    .font(.system(size: 14, weight: .bold))
+                    .scaledFont(size: 14, weight: .bold)
                     .tracking(0.7)
                     .foregroundStyle(Brand.lilac)
                     .multilineTextAlignment(.center)
@@ -124,14 +167,14 @@ struct FindYourTableView: View {
             }
 
             Text("Find your table")
-                .font(.system(size: 34, weight: .heavy))
+                .scaledFont(size: 34, weight: .heavy)
                 .tracking(-0.5)
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
                 .padding(.top, 6)
 
             Text("Type your name to see where you're seated.")
-                .font(.system(size: 15))
+                .scaledFont(size: 15)
                 .foregroundStyle(.white.opacity(0.7))
                 .multilineTextAlignment(.center)
                 .padding(.top, 10)
@@ -142,16 +185,19 @@ struct FindYourTableView: View {
     private var searchInput: some View {
         HStack(spacing: 11) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 18, weight: .semibold)
+                .foregroundStyle(Brand.textSecondary)
+                .accessibilityHidden(true)
             ZStack(alignment: .leading) {
                 if query.isEmpty {
                     Text("Your name")
-                        .font(.system(size: 17))
-                        .foregroundStyle(Brand.slate400)
+                        .scaledFont(size: 17)
+                        .foregroundStyle(Brand.textSecondary)
+                        .accessibilityHidden(true)
                 }
                 TextField("", text: $query)
-                    .font(.system(size: 17, weight: .semibold))
+                    .accessibilityLabel("Guest name")
+                    .scaledFont(size: 17, weight: .semibold)
                     .foregroundStyle(Brand.ink)
                     .tint(Brand.plum)
                     .textInputAutocapitalization(.words)
@@ -166,9 +212,14 @@ struct FindYourTableView: View {
                     clearSearch()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(Brand.slate300)
+                        .scaledFont(size: 18)
+                        .foregroundStyle(Brand.textSecondary)
+                        // Glyph stays 18pt; hit target meets 44pt.
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 16)
@@ -198,65 +249,58 @@ struct FindYourTableView: View {
         .shadow(color: .black.opacity(0.35), radius: 17, x: 0, y: 14)
     }
 
-    /// Lowercased names that appear more than once in the current suggestions, so
-    /// colliding rows can be disambiguated (F16).
+    /// Folded (case- and accent-insensitive) names that appear more than once
+    /// in the current suggestions, so colliding rows can be disambiguated (F16).
     private var collidingNames: Set<String> {
         var counts: [String: Int] = [:]
-        for guest in suggestions { counts[guest.name.lowercased(), default: 0] += 1 }
+        for guest in suggestions { counts[GuestNameMatcher.fold(guest.name), default: 0] += 1 }
         return Set(counts.filter { $0.value > 1 }.map(\.key))
     }
 
     private func suggestionRow(_ guest: GuestSearchResult) -> some View {
         // Only same-name guests get a household subtitle — never extra PII.
-        let isAmbiguous = collidingNames.contains(guest.name.lowercased())
+        let isAmbiguous = collidingNames.contains(GuestNameMatcher.fold(guest.name))
         let disambiguator = isAmbiguous ? guest.groupName?.nilIfBlank : nil
         return HStack(spacing: 12) {
             InitialsAvatar(name: guest.name, size: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text(highlightedName(guest.name))
-                    .font(.system(size: 16))
+                    .scaledFont(size: 16)
                     .foregroundStyle(Brand.ink)
                     .lineLimit(1)
                 if isAmbiguous {
                     Text(disambiguator.map { "Household · \($0)" } ?? "Tap to confirm it's you")
-                        .font(.system(size: 12, weight: .semibold))
+                        .scaledFont(size: 12, weight: .semibold)
                         .foregroundStyle(Brand.slate500)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
             Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Brand.slate300)
+                .scaledFont(size: 14, weight: .bold)
+                .foregroundStyle(Brand.textSecondary)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .contentShape(Rectangle())
     }
 
-    /// Bolds the matched prefix of the name against the current query.
+    /// Bolds the matched part of the name against the current query (prefix
+    /// first, then first occurrence), ignoring case and accents.
     private func highlightedName(_ name: String) -> AttributedString {
         var attr = AttributedString(name)
         attr.font = .system(size: 16)
-        let term = query.trimmingCharacters(in: .whitespaces)
-        guard !term.isEmpty else { return attr }
-        if let range = name.range(of: term, options: [.caseInsensitive, .anchored]) {
-            // Matched prefix from the start of the name.
-            if let attrRange = Range(range, in: attr) {
-                attr[attrRange].font = .system(size: 16, weight: .bold)
-            }
-        } else if let range = name.range(of: term, options: .caseInsensitive) {
-            // Fall back to first occurrence anywhere.
-            if let attrRange = Range(range, in: attr) {
-                attr[attrRange].font = .system(size: 16, weight: .bold)
-            }
+        if let range = GuestNameMatcher.matchRange(in: name, term: query),
+           let attrRange = Range(range, in: attr) {
+            attr[attrRange].font = .system(size: 16, weight: .bold)
         }
         return attr
     }
 
     private var noMatchHint: some View {
         Text("No guest found by that name yet. Keep typing or check the spelling.")
-            .font(.system(size: 13))
+            .scaledFont(size: 13)
             .foregroundStyle(.white.opacity(0.65))
             .multilineTextAlignment(.center)
             .padding(.horizontal, 8)
@@ -282,12 +326,12 @@ struct FindYourTableView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "calendar")
-                        .font(.system(size: 12, weight: .semibold))
+                        .scaledFont(size: 12, weight: .semibold)
                     Text(selectedEvent?.name ?? "Choose event")
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(size: 13, weight: .semibold)
                         .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10, weight: .bold))
+                        .scaledFont(size: 10, weight: .bold)
                 }
                 .foregroundStyle(.white.opacity(0.7))
                 .padding(.horizontal, 14)
@@ -301,9 +345,9 @@ struct FindYourTableView: View {
     private var footer: some View {
         HStack(spacing: 6) {
             Image(systemName: "sofa")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
             Text("A Seat Awaits · Where every guest matters")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
         }
         .foregroundStyle(.white.opacity(0.55))
     }
@@ -315,6 +359,30 @@ struct FindYourTableView: View {
         } description: {
             Text("Create an event and add guests to use Find Your Table.")
                 .foregroundStyle(.white.opacity(0.8))
+        } actions: {
+            Button("Refresh") { Task { await loadEvents() } }
+                .buttonStyle(.heroOutline)
+                .padding(.top, 8)
+        }
+    }
+
+    private var loadingState: some View {
+        ProgressView("Loading events…")
+            .tint(.white)
+            .foregroundStyle(.white.opacity(0.8))
+    }
+
+    private func loadFailedState(_ message: String) -> some View {
+        ContentUnavailableView {
+            Label("Couldn't load your events", systemImage: "wifi.exclamationmark")
+                .foregroundStyle(.white)
+        } description: {
+            Text(message)
+                .foregroundStyle(.white.opacity(0.8))
+        } actions: {
+            Button("Retry") { Task { await loadEvents() } }
+                .buttonStyle(.heroOutline)
+                .padding(.top, 8)
         }
     }
 
@@ -343,12 +411,12 @@ struct FindYourTableView: View {
                     // Header on the band.
                     VStack(spacing: 6) {
                         Text("WELCOME, \(firstName(result.name))".uppercased())
-                            .font(.system(size: 13, weight: .bold))
+                            .scaledFont(size: 13, weight: .bold)
                             .tracking(0.6)
                             .foregroundStyle(Brand.lilac)
                             .multilineTextAlignment(.center)
                         Text("You're all set")
-                            .font(.system(size: 26, weight: .heavy))
+                            .scaledFont(size: 26, weight: .heavy)
                             .tracking(-0.3)
                             .foregroundStyle(.white)
                     }
@@ -357,7 +425,7 @@ struct FindYourTableView: View {
                     resultCard(result)
                         .padding(.top, 24)
 
-                    Button("Search a different name") {
+                    Button("Search a Different Name") {
                         backToSearch()
                     }
                     .buttonStyle(.secondaryOutline)
@@ -366,8 +434,8 @@ struct FindYourTableView: View {
                     Spacer(minLength: 24)
 
                     Text("A Seat Awaits · Where every guest matters")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Brand.slate400)
+                        .scaledFont(size: 12)
+                        .foregroundStyle(Brand.textSecondary)
                         .padding(.top, 28)
                         .padding(.bottom, 20)
                 }
@@ -382,11 +450,11 @@ struct FindYourTableView: View {
     private func resultCard(_ result: GuestSearchResult) -> some View {
         VStack(spacing: 0) {
             Text("Your table")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(size: 15, weight: .semibold)
                 .foregroundStyle(Brand.slate500)
 
             Text(result.tableNumber)
-                .font(.system(size: 72, weight: .heavy))
+                .scaledFont(size: 72, weight: .heavy)
                 .tracking(-2)
                 .foregroundStyle(Brand.plum)
                 .padding(.top, 8)
@@ -394,7 +462,7 @@ struct FindYourTableView: View {
             // Seat pill.
             HStack(spacing: 8) {
                 Text(result.tableDescription?.nilIfBlank ?? "Seat assigned")
-                    .font(.system(size: 14, weight: .bold))
+                    .scaledFont(size: 14, weight: .bold)
                     .lineLimit(1)
             }
             .foregroundStyle(Brand.purple)
@@ -407,10 +475,10 @@ struct FindYourTableView: View {
             if let group = result.groupName?.nilIfBlank {
                 HStack(spacing: 8) {
                     Image(systemName: "person.2.fill")
-                        .font(.system(size: 15))
+                        .scaledFont(size: 15)
                         .foregroundStyle(Brand.teal)
                     Text("Seated with \(group)")
-                        .font(.system(size: 14))
+                        .scaledFont(size: 14)
                         .foregroundStyle(Brand.slate600)
                 }
                 .padding(.top, 18)
@@ -456,6 +524,7 @@ struct FindYourTableView: View {
     // MARK: - Data
 
     private func loadEvents() async {
+        eventsLoadError = nil
         do {
             events = try await supabase.select(
                 "events",
@@ -463,9 +532,15 @@ struct FindYourTableView: View {
                         URLQueryItem(name: "order", value: "created_at.desc")],
                 as: [Event].self
             )
-            if selectedEvent == nil { selectedEvent = events.first }
+            if selectedEvent == nil || !events.contains(where: { $0.id == selectedEvent?.id }) {
+                selectedEvent = events.first
+            }
+            isLoadingEvents = false
         } catch {
-            errorMessage = FriendlyError.message(for: error)
+            // Navigating away cancels the `.task`; that is not a failure.
+            guard !FriendlyError.isCancellation(error) else { return }
+            isLoadingEvents = false
+            eventsLoadError = FriendlyError.message(for: error)
         }
     }
 
@@ -496,20 +571,33 @@ struct FindYourTableView: View {
         isSearching = true
         defer { isSearching = false }
 
-        let params = GuestSearchParams(p_token: token, p_query: term, p_limit: 8)
         do {
-            let results = try await supabase.rpc(
-                "search_guests_by_qr_token",
-                params: params,
-                as: [GuestSearchResult].self
-            )
+            var results = try await search(term: term, token: token)
+            // The RPC is a plain ILIKE, so an accented query ("José") misses a
+            // name stored without the accent. Retry once with the accents
+            // stripped. (The reverse, "Jose" finding "José", needs unaccent in
+            // the RPC and is matched client-side for highlighting only.)
+            if results.isEmpty, GuestNameMatcher.hasDiacritics(term) {
+                let folded = GuestNameMatcher.fold(term)
+                if folded.count >= 2 {
+                    results = try await search(term: folded, token: token)
+                }
+            }
             if Task.isCancelled { return }
             suggestions = results
             errorMessage = nil
         } catch {
-            if Task.isCancelled { return }
+            if Task.isCancelled || FriendlyError.isCancellation(error) { return }
             suggestions = []
             errorMessage = FriendlyError.message(for: error)
         }
+    }
+
+    private func search(term: String, token: String) async throws -> [GuestSearchResult] {
+        try await supabase.rpc(
+            "search_guests_by_qr_token",
+            params: GuestSearchParams(p_token: token, p_query: term, p_limit: 8),
+            as: [GuestSearchResult].self
+        )
     }
 }

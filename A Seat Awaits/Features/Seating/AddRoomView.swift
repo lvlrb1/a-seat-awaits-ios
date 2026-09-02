@@ -22,10 +22,22 @@ struct AddRoomView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var confirmingDelete = false
+    @State private var initialSignature = ""
+    @FocusState private var numericFocused: Bool
 
-    init(store: SeatingStore, editing: FloorPlanRoom? = nil) {
+    /// Where the canvas would like a new room centered (see AddTableView).
+    private let suggestedPosition: CGPoint?
+    /// Called with the freshly-created room so the canvas can select it.
+    private let onCreated: ((FloorPlanRoom) -> Void)?
+
+    init(store: SeatingStore,
+         editing: FloorPlanRoom? = nil,
+         suggestedPosition: CGPoint? = nil,
+         onCreated: ((FloorPlanRoom) -> Void)? = nil) {
         self.store = store
         self.editing = editing
+        self.suggestedPosition = suggestedPosition
+        self.onCreated = onCreated
         if let r = editing {
             _name = State(initialValue: r.name)
             _widthFt = State(initialValue: r.widthFt)
@@ -40,6 +52,9 @@ struct AddRoomView: View {
     private var isEditing: Bool { editing != nil }
     private var canSave: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty }
 
+    private var signature: String { "\(name)|\(widthFt)|\(heightFt)" }
+    private var isDirty: Bool { !initialSignature.isEmpty && signature != initialSignature }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -53,15 +68,25 @@ struct AddRoomView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isEditing ? "Save" : "Add") { Task { await save() } }
-                        .disabled(isSaving || !canSave)
+                    Button { Task { await save() } } label: {
+                        HStack(spacing: 6) {
+                            if isSaving { ProgressView().controlSize(.small) }
+                            Text(isEditing ? "Save" : "Add")
+                        }
+                    }
+                    .disabled(isSaving || !canSave)
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { numericFocused = false }
                 }
             }
-            .interactiveDismissDisabled(isSaving)
+            .interactiveDismissDisabled(isSaving || isDirty)
+            .onAppear { if initialSignature.isEmpty { initialSignature = signature } }
             .confirmationDialog("Delete \(name)?", isPresented: $confirmingDelete,
                                 titleVisibility: .visible) {
-                Button("Delete room", role: .destructive) {
-                    if let editing { Task { await store.deleteRoom(editing); dismiss() } }
+                Button("Delete Room", role: .destructive) {
+                    if let editing { Task { await store.deleteRoomWithUndo(editing); dismiss() } }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -90,7 +115,7 @@ struct AddRoomView: View {
             dimensionField("Width (ft)", value: $widthFt)
             dimensionField("Length (ft)", value: $heightFt)
             Text("\(TableScale.feetLabel(widthFt)) × \(TableScale.feetLabel(heightFt)) ft")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
         }
     }
@@ -109,6 +134,7 @@ struct AddRoomView: View {
             Spacer()
             TextField(title, value: value, format: .number.precision(.fractionLength(0...1)))
                 .keyboardType(.decimalPad)
+                .focused($numericFocused)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: 90)
         }
@@ -133,12 +159,25 @@ struct AddRoomView: View {
                 store.errorMessage = nil
             }
         } else {
-            // Stagger new rooms a little so they don't stack exactly.
-            let offset = Double(store.rooms.count % 4) * 24
+            // Center the room on what the planner is looking at, but never on
+            // top of another room (a two-foot gap keeps their outlines apart).
+            let size = (width: TableScale.feet(w), height: TableScale.feet(h))
+            let anchor: (x: Double, y: Double)
+            if let suggestedPosition {
+                anchor = (Double(suggestedPosition.x), Double(suggestedPosition.y))
+            } else if store.rooms.isEmpty {
+                anchor = (size.width / 2, size.height / 2)
+            } else {
+                anchor = store.defaultPlacementAnchor
+            }
+            let spot = FloorPlanGeometry.freePosition(near: anchor, size: size,
+                                                      among: store.roomObstacles,
+                                                      clearance: 48, step: 48)
             do {
-                try await store.addRoom(name: finalName, widthFt: w, heightFt: h,
-                                        positionX: 40 + offset, positionY: 40 + offset)
+                let created = try await store.addRoom(name: finalName, widthFt: w, heightFt: h,
+                                                      positionX: spot.x, positionY: spot.y)
                 dismiss()
+                onCreated?(created)
             } catch {
                 errorMessage = FriendlyError.message(for: error)
             }

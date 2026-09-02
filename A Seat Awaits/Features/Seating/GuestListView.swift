@@ -11,14 +11,21 @@ import SwiftUI
 
 struct GuestListView: View {
     @Bindable var store: SeatingStore
+    /// Hands a guest to the floor plan's assign mode ("Seat on Floor Plan").
+    /// Nil hides those affordances (e.g. a host without a floor plan).
+    var onSeatOnFloorPlan: ((Guest) -> Void)? = nil
 
     @State private var search = ""
     @State private var filter: GuestFilter = .all
+    /// Household NAME (not group id): imported guests carry only a name.
     @State private var groupFilter: String?
     @State private var sort: GuestSort = .lastNameAZ
     @State private var detailGuest: Guest?
     @State private var showingImport = false
     @State private var guestPendingDeletion: Guest?
+    /// Set from inside the detail sheet; acted on once the sheet has dismissed
+    /// so the tab switch never fights the sheet's dismissal animation.
+    @State private var pendingFloorPlanGuest: Guest?
 
     enum GuestFilter: Equatable {
         case all
@@ -27,14 +34,17 @@ struct GuestListView: View {
         case households
     }
 
-    init(store: SeatingStore) {
+    init(store: SeatingStore, onSeatOnFloorPlan: ((Guest) -> Void)? = nil) {
         self.store = store
+        self.onSeatOnFloorPlan = onSeatOnFloorPlan
     }
 
     private var visibleGuests: [Guest] {
+        let household = (filter == .households ? groupFilter : nil)
+            .map { SeatingLogic.householdFilter(named: $0, groups: store.groups) }
         let base = SeatingLogic.filterAndSort(store.guests,
                                               search: search,
-                                              groupId: filter == .households ? groupFilter : nil,
+                                              household: household,
                                               sort: sort)
         switch filter {
         case .all, .households:
@@ -46,25 +56,48 @@ struct GuestListView: View {
         }
     }
 
+    /// "Seat on Floor Plan" only makes sense with a plan to seat on.
+    private var canSeatOnFloorPlan: Bool {
+        onSeatOnFloorPlan != nil && store.canEdit && !store.tables.isEmpty
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             searchAndFilters
 
             if store.guests.isEmpty {
-                ContentUnavailableView("No guests yet",
-                                       systemImage: "person.2",
-                                       description: Text("Import or add guests, then seat them at tables."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Brand.canvas)
+                if store.isLoading {
+                    // The workspace overlay shows the spinner; don't flash the
+                    // empty state underneath it.
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ContentUnavailableView("No guests yet",
+                                           systemImage: "person.2",
+                                           description: Text("Import or add guests, then seat them at tables."))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Brand.canvas)
+                }
+            } else if visibleGuests.isEmpty {
+                filteredEmptyState
             } else {
                 List {
                     ForEach(visibleGuests) { guest in
-                        GuestRowView(guest: guest, table: store.table(withId: guest.tableId))
+                        Button { detailGuest = guest } label: {
+                            GuestRowView(guest: guest, table: store.table(withId: guest.tableId))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Brand.card)
-                            .contentShape(Rectangle())
-                            .onTapGesture { detailGuest = guest }
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                if canSeatOnFloorPlan {
+                                    Button {
+                                        onSeatOnFloorPlan?(guest)
+                                    } label: { Label("Seat on Plan", systemImage: "map") }
+                                        .tint(Brand.teal)
+                                }
+                            }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 if store.canEdit {
                                     // Deliberately NOT role: .destructive — that makes the
@@ -87,6 +120,11 @@ struct GuestListView: View {
                                     Button {
                                         detailGuest = guest
                                     } label: { Label("Assign to Table", systemImage: "person.crop.circle.badge.plus") }
+                                    if canSeatOnFloorPlan {
+                                        Button {
+                                            onSeatOnFloorPlan?(guest)
+                                        } label: { Label("Seat on Floor Plan", systemImage: "map") }
+                                    }
                                     Button(role: .destructive) {
                                         requestDelete(guest)
                                     } label: { Label("Delete Guest", systemImage: "trash") }
@@ -113,17 +151,60 @@ struct GuestListView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .background(Brand.canvas)
+                .refreshable { await store.loadAll() }
             }
 
             footer
         }
         .background(Brand.canvas)
-        .sheet(item: $detailGuest) { guest in
-            GuestDetailSheet(store: store, guest: guest)
+        .sheet(item: $detailGuest, onDismiss: {
+            // The undo snackbar sat under the sheet; give it a full window now.
+            store.undo.extend()
+            if let guest = pendingFloorPlanGuest {
+                pendingFloorPlanGuest = nil
+                onSeatOnFloorPlan?(guest)
+            }
+        }) { guest in
+            GuestDetailSheet(store: store, guest: guest,
+                             onPickOnFloorPlan: canSeatOnFloorPlan
+                                ? { pendingFloorPlanGuest = guest }
+                                : nil)
         }
         .sheet(isPresented: $showingImport) {
             ImportGuestsView(store: store)
         }
+    }
+
+    /// The list has guests, but none survive the current search / chip.
+    @ViewBuilder
+    private var filteredEmptyState: some View {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        Group {
+            if !query.isEmpty {
+                ContentUnavailableView {
+                    Label("No guests match “\(query)”.", systemImage: "magnifyingglass")
+                } description: {
+                    Text("Try a different name, or clear the search.")
+                } actions: {
+                    Button("Clear Search") { search = "" }
+                        .buttonStyle(.secondaryOutline)
+                }
+            } else if filter == .open {
+                ContentUnavailableView("Everyone is seated.",
+                                       systemImage: "checkmark.seal",
+                                       description: Text("No open guests to show."))
+            } else if filter == .assigned {
+                ContentUnavailableView("No one is seated yet.",
+                                       systemImage: "chair",
+                                       description: Text("Seat guests from their details, or on the floor plan."))
+            } else {
+                ContentUnavailableView("No guests in this household.",
+                                       systemImage: "person.2",
+                                       description: Text("Pick another household, or show all groups."))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Brand.canvas)
     }
 
     /// Routes a delete request: guests carrying real data (a seat, notes, dietary
@@ -146,14 +227,9 @@ struct GuestListView: View {
 
     /// Confirmation copy that names what would be lost (F2).
     private func deletionMessage(for guest: Guest) -> String {
-        var parts: [String] = []
-        if let table = store.table(withId: guest.tableId) {
-            parts.append("seated at \(table.name)")
-        }
-        if guest.dietaryPreference?.nilIfBlank != nil { parts.append("has dietary notes") }
-        else if guest.notes?.nilIfBlank != nil { parts.append("has notes") }
-        let detail = parts.isEmpty ? "" : " They're \(parts.joined(separator: " and "))."
-        return "\(detail) You'll be able to undo for a few seconds.".trimmingCharacters(in: .whitespaces)
+        SeatingLogic.deletionMessage(tableName: store.table(withId: guest.tableId)?.name,
+                                     hasDietary: guest.dietaryPreference?.nilIfBlank != nil,
+                                     hasNotes: guest.notes?.nilIfBlank != nil)
     }
 
     // MARK: - Search + filter chips
@@ -179,8 +255,11 @@ struct GuestListView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         groupChip(nil, label: "All groups")
-                        ForEach(store.groups) { group in
-                            groupChip(group.id, label: group.name)
+                        // Names, not group ids: imported households have no
+                        // `guest_groups` row, only a `group_name` on each guest.
+                        ForEach(SeatingLogic.householdNames(guests: store.guests,
+                                                            groups: store.groups), id: \.self) { name in
+                            groupChip(name, label: name)
                         }
                     }
                 }
@@ -203,11 +282,11 @@ struct GuestListView: View {
         .buttonStyle(.plain)
     }
 
-    private func groupChip(_ id: String?, label: String) -> some View {
+    private func groupChip(_ name: String?, label: String) -> some View {
         Button {
-            groupFilter = id
+            groupFilter = name
         } label: {
-            FilterChip(title: label, selected: groupFilter == id, selectedBg: Brand.purple)
+            FilterChip(title: label, selected: groupFilter == name, selectedBg: Brand.purple)
         }
         .buttonStyle(.plain)
     }
@@ -221,7 +300,7 @@ struct GuestListView: View {
             }
         } label: {
             Image(systemName: "arrow.up.arrow.down")
-                .font(.system(size: 14, weight: .bold))
+                .scaledFont(size: 14, weight: .bold)
                 .foregroundStyle(Brand.accent)
                 .frame(width: 38, height: 32)
                 .background(Brand.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -241,7 +320,7 @@ struct GuestListView: View {
             HStack {
                 let stats = store.stats
                 Text("\(stats.assigned) of \(stats.total) seated")
-                    .font(.system(size: 14, weight: .bold))
+                    .scaledFont(size: 14, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                 Spacer()
                 if store.canEdit {
@@ -250,8 +329,8 @@ struct GuestListView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Import").font(.system(size: 13, weight: .bold))
+                                .scaledFont(size: 14, weight: .bold)
+                            Text("Import").scaledFont(size: 13, weight: .bold)
                         }
                         .foregroundStyle(Brand.accent)
                         .padding(.horizontal, 14)
@@ -288,17 +367,19 @@ struct GuestRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             InitialsAvatar(name: guest.name, size: 42)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(guest.name)
-                    .font(.system(size: 16, weight: .bold))
+                    .scaledFont(size: 16, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                     .lineLimit(1)
                 if let subtitle {
                     HStack(spacing: 6) {
                         Circle().fill(Brand.teal).frame(width: 8, height: 8)
+                            .accessibilityHidden(true)
                         Text(subtitle)
-                            .font(.system(size: 13))
+                            .scaledFont(size: 13)
                             .foregroundStyle(Brand.textSecondary)
                             .lineLimit(1)
                     }
@@ -314,6 +395,19 @@ struct GuestRowView: View {
             }
         }
         .padding(.vertical, 14)
+        // One VoiceOver element: name, household, dietary needs, then seat.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens seating options")
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [guest.name]
+        if let group = guest.groupName?.nilIfBlank { parts.append("household \(group)") }
+        if let diet = guest.dietaryPreference?.nilIfBlank { parts.append(diet) }
+        parts.append(table.map { "seated at \($0.name)" } ?? "unassigned")
+        return parts.joined(separator: ", ")
     }
 
     private var subtitle: String? {

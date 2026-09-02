@@ -38,6 +38,14 @@ struct EditProfileView: View {
         !store.isSavingName && !trimmedName.isEmpty && trimmedName != (snapshot?.fullName ?? "")
     }
 
+    private var trimmedEmail: String {
+        newEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private var isNewEmailValid: Bool { EmailValidator.isValid(trimmedEmail) }
+    /// Inline validation shown only once the user has typed something that
+    /// isn't an email yet; never nags on an empty field.
+    private var showsEmailValidation: Bool { !trimmedEmail.isEmpty && !isNewEmailValid }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -65,7 +73,7 @@ struct EditProfileView: View {
     private var nameCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Your name")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
 
             LabeledField(title: "Full name", isFocused: focus == .name) {
@@ -115,19 +123,19 @@ struct EditProfileView: View {
     private var emailCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Email")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
 
             HStack(spacing: 8) {
-                Text(snapshot?.email ?? "—")
-                    .font(.system(size: 15))
+                Text(snapshot?.email ?? "Not set")
+                    .scaledFont(size: 15)
                     .foregroundStyle(Brand.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
                 if let verified = snapshot?.authUser.isEmailVerified {
                     Text(verified ? "Verified" : "Unverified")
-                        .font(.system(size: 12, weight: .bold))
+                        .scaledFont(size: 12, weight: .bold)
                         .lineLimit(1)
                         .fixedSize()
                         .foregroundStyle(verified ? Brand.successText : Brand.warningText)
@@ -155,8 +163,16 @@ struct EditProfileView: View {
                         .onSubmit { Task { await submitEmail() } }
                 }
 
+                if showsEmailValidation {
+                    Text("Enter a valid email address.")
+                        .scaledFont(size: 13, weight: .medium)
+                        .foregroundStyle(Brand.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("Enter a valid email address")
+                }
+
                 Text("We'll send a confirmation link to the new address. Your current email stays active until you confirm.")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -174,10 +190,10 @@ struct EditProfileView: View {
                     }
                 }
                 .buttonStyle(.secondaryOutline)
-                .disabled(store.isChangingEmail || newEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(store.isChangingEmail || !isNewEmailValid)
             } else {
                 Text("Your email is managed by \(snapshot?.authUser.providerLabel ?? "your sign-in provider"). To change it, update your provider account.")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -188,6 +204,7 @@ struct EditProfileView: View {
     }
 
     private func submitEmail() async {
+        guard isNewEmailValid else { return }
         focus = nil
         emailFeedback = nil
         switch await store.changeEmail(newEmail) {

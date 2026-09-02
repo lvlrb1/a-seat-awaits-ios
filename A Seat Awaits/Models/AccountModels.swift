@@ -178,24 +178,14 @@ nonisolated struct AccountDeletionResponse: Decodable, Sendable, Equatable {
 nonisolated enum AccountLinks {
     static let base = URL(string: "https://aseatawaits.com")!
 
-    /// Secure billing/customer-portal management page (manage subscription,
-    /// payment method, invoices, resume/cancel — all confirmed by Stripe there).
-    static let billing = URL(string: "https://aseatawaits.com/account/billing")!
-
-    static let pricing = URL(string: "https://aseatawaits.com/pricing")!
     static let privacyPolicy = URL(string: "https://aseatawaits.com/privacy.pdf")!
     static let termsOfService = URL(string: "https://aseatawaits.com/terms.pdf")!
     static let helpCenter = URL(string: "https://aseatawaits.com/help")!
     static let supportEmail = URL(string: "mailto:support@aseatawaits.com")!
 
-    /// Whether the app should surface an external upgrade/purchase call-to-action.
-    /// Disabled: purchases go through StoreKit In-App Purchase (App Review
-    /// guideline 3.1.1). Existing Stripe subscribers see neutral, non-tappable
-    /// billing text rather than a link to the web portal.
-    static let externalUpgradeEnabled = false
-
-    /// Where the upgrade CTA points when enabled.
-    static let upgrade = pricing
+    // Purchases go through StoreKit In-App Purchase only (App Review guideline
+    // 3.1.1). There is deliberately no pricing, upgrade, or billing-portal URL
+    // here: existing Stripe subscribers see neutral, non-tappable billing text.
 }
 
 // MARK: - Date formatting

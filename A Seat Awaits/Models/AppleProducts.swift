@@ -59,3 +59,40 @@ nonisolated enum AppleProducts {
         all.first { $0.productID == productID }
     }
 }
+
+/// How much the yearly subscription saves versus twelve monthly renewals,
+/// derived from the App Store prices so the paywall never hard-codes a claim.
+nonisolated enum AnnualSavings: Equatable, Sendable {
+    /// The yearly price equals (within rounding) a whole number of monthly
+    /// payments left off, e.g. "2 months free".
+    case monthsFree(Int)
+    /// Anything else, as a whole-percent saving, e.g. "Save 17%".
+    case percent(Int)
+
+    /// Nil when there is no saving to advertise (missing prices, or yearly
+    /// costs as much as or more than monthly × 12).
+    static func compute(monthly: Decimal?, annual: Decimal?) -> AnnualSavings? {
+        guard let monthly, let annual, monthly > 0, annual > 0 else { return nil }
+        let yearAtMonthly = monthly * 12
+        guard annual < yearAtMonthly else { return nil }
+        let monthsFreeExact = (yearAtMonthly - annual) / monthly
+        let monthsFreeDouble = NSDecimalNumber(decimal: monthsFreeExact).doubleValue
+        let roundedMonths = Int(monthsFreeDouble.rounded())
+        if roundedMonths >= 1, abs(monthsFreeDouble - Double(roundedMonths)) < 0.1 {
+            return .monthsFree(roundedMonths)
+        }
+        let fraction = NSDecimalNumber(decimal: (yearAtMonthly - annual) / yearAtMonthly).doubleValue
+        let percent = Int((fraction * 100).rounded())
+        return percent >= 1 ? .percent(percent) : nil
+    }
+
+    /// Short marketing line for the paywall.
+    var label: String {
+        switch self {
+        case .monthsFree(let n):
+            return n == 1 ? "1 month free with yearly billing" : "\(n) months free with yearly billing"
+        case .percent(let p):
+            return "Save \(p)% with yearly billing"
+        }
+    }
+}

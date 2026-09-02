@@ -31,10 +31,26 @@ struct AddTableView: View {
     @State private var didSetDefaultName = false
     @State private var isSaving = false
     @State private var errorMessage: String?
+    /// The form's values when it opened; anything different means the planner
+    /// has typed something worth protecting from an accidental swipe-down.
+    @State private var initialSignature = ""
+    @FocusState private var numericFocused: Bool
 
-    init(store: SeatingStore, editing: SeatingTable? = nil) {
+    /// Where the canvas would like a new table centered (its viewport middle,
+    /// in canvas coordinates). Nil when opened from somewhere without a canvas.
+    private let suggestedPosition: CGPoint?
+    /// Called with the freshly-created table so the canvas can select it and
+    /// scroll it into view.
+    private let onCreated: ((SeatingTable) -> Void)?
+
+    init(store: SeatingStore,
+         editing: SeatingTable? = nil,
+         suggestedPosition: CGPoint? = nil,
+         onCreated: ((SeatingTable) -> Void)? = nil) {
         self.store = store
         self.editing = editing
+        self.suggestedPosition = suggestedPosition
+        self.onCreated = onCreated
         if let t = editing {
             _name = State(initialValue: t.name)
             _shape = State(initialValue: t.shape ?? .circle)
@@ -81,6 +97,13 @@ struct AddTableView: View {
     }
     private var lowersBelowSeated: Bool { isEditing && capacity < seatedCount }
 
+    private var canSave: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    private var signature: String {
+        "\(name)|\(shape.rawValue)|\(capacity)|\(widthFt)|\(lengthFt)|\(note)|\(rotation)|\(forceCustom)"
+    }
+    private var isDirty: Bool { !initialSignature.isEmpty && signature != initialSignature }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -96,16 +119,26 @@ struct AddTableView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isEditing ? "Save" : "Add") { Task { await save() } }
-                        .disabled(isSaving)
+                    Button { Task { await save() } } label: {
+                        HStack(spacing: 6) {
+                            if isSaving { ProgressView().controlSize(.small) }
+                            Text(isEditing ? "Save" : "Add")
+                        }
+                    }
+                    .disabled(isSaving || !canSave)
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { numericFocused = false }
                 }
             }
-            .interactiveDismissDisabled(isSaving)
+            .interactiveDismissDisabled(isSaving || isDirty)
             .onAppear {
                 if !isEditing && name.isEmpty && !didSetDefaultName {
                     name = "Table \(store.tables.count + 1)"
                     didSetDefaultName = true
                 }
+                if initialSignature.isEmpty { initialSignature = signature }
             }
         }
         // Match the table detail/assign sheets: full-height page sheet on iPad
@@ -161,7 +194,7 @@ struct AddTableView: View {
         Section("Rotation") {
             Stepper(value: $rotation, in: 0...345, step: 15) {
                 Text("\(Int(rotation))°")
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(size: 16, weight: .semibold)
                     .monospacedDigit()
             }
             .accessibilityLabel("Rotation")
@@ -194,6 +227,7 @@ struct AddTableView: View {
             Spacer()
             TextField(title, value: value, format: .number.precision(.fractionLength(0...1)))
                 .keyboardType(.decimalPad)
+                .focused($numericFocused)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: 90)
         }
@@ -206,13 +240,13 @@ struct AddTableView: View {
         } label: {
             VStack(spacing: 5) {
                 Image(systemName: preset.shape.systemImage)
-                    .font(.system(size: 19, weight: .semibold))
+                    .scaledFont(size: 19, weight: .semibold)
                 Text(preset.label)
-                    .font(.system(size: 12, weight: .bold))
+                    .scaledFont(size: 12, weight: .bold)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Text("\(preset.capacity) seats")
-                    .font(.system(size: 11, weight: .medium))
+                    .scaledFont(size: 11, weight: .medium)
                     .foregroundStyle(selected ? Brand.accent : Brand.textSecondary)
             }
             .frame(width: 96, height: 84)
@@ -234,11 +268,11 @@ struct AddTableView: View {
         } label: {
             VStack(spacing: 5) {
                 Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 19, weight: .semibold))
+                    .scaledFont(size: 19, weight: .semibold)
                 Text("Custom")
-                    .font(.system(size: 12, weight: .bold))
+                    .scaledFont(size: 12, weight: .bold)
                 Text("Any size")
-                    .font(.system(size: 11, weight: .medium))
+                    .scaledFont(size: 11, weight: .medium)
                     .foregroundStyle(selected ? Brand.accent : Brand.textSecondary)
             }
             .frame(width: 96, height: 84)
@@ -297,20 +331,27 @@ struct AddTableView: View {
                 store.errorMessage = nil
             }
         } else {
-            // Stagger new tables so they don't stack exactly on top of each other.
-            let offset = Double(store.tables.count % 4) * 30
+            // Land the table where the planner is looking (the canvas passes
+            // its viewport center), nudged to the nearest clear spot so new
+            // tables never stack on top of each other or off-screen.
+            let anchor = suggestedPosition.map { (x: Double($0.x), y: Double($0.y)) }
+                ?? store.defaultPlacementAnchor
+            let spot = FloorPlanGeometry.freePosition(near: anchor,
+                                                      size: (widthPx, heightPx),
+                                                      among: store.placementObstacles)
             do {
-                try await store.addTable(name: finalName,
-                                         shape: shape,
-                                         capacity: capacity,
-                                         width: widthPx,
-                                         height: heightPx,
-                                         positionX: 60 + offset,
-                                         positionY: 80 + offset,
-                                         description: description,
-                                         rotation: finalRotation,
-                                         isCustom: isCustom)
+                let created = try await store.addTable(name: finalName,
+                                                       shape: shape,
+                                                       capacity: capacity,
+                                                       width: widthPx,
+                                                       height: heightPx,
+                                                       positionX: spot.x,
+                                                       positionY: spot.y,
+                                                       description: description,
+                                                       rotation: finalRotation,
+                                                       isCustom: isCustom)
                 dismiss()
+                onCreated?(created)
             } catch {
                 errorMessage = FriendlyError.message(for: error)
             }

@@ -14,6 +14,7 @@ struct EventListView: View {
 
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var store: EventStore
     @State private var showingCreate = false
@@ -171,7 +172,17 @@ struct EventListView: View {
                 if store.events.isEmpty {
                     await store.loadDashboard(myEmail: appState.currentUser?.email)
                 }
+                await retrySampleEventIfNeeded()
                 _ = await gateLoad
+            }
+            // An invitation accepted from a deep link changed the list.
+            .onChange(of: appState.eventsRefreshGeneration) { _, _ in
+                Task { await store.loadDashboard(myEmail: appState.currentUser?.email) }
+            }
+            // Commit a deferred delete before the app can be suspended or
+            // killed inside the undo window, or the delete is silently lost.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { store.flushPendingDelete() }
             }
             .alert("Something went wrong",
                    isPresented: Binding(get: { store.errorMessage != nil },
@@ -181,6 +192,17 @@ struct EventListView: View {
                 Text(store.errorMessage ?? "")
             }
         }
+    }
+
+    /// The sign-up/sign-in call to `provision-sample-event` failed (a blip),
+    /// so a brand-new user would otherwise land on an empty dashboard and be
+    /// funnelled straight into the paywall. Retry exactly once, only when the
+    /// first load genuinely came back empty (not when it failed).
+    private func retrySampleEventIfNeeded() async {
+        guard appState.needsSampleEventRetry else { return }
+        appState.needsSampleEventRetry = false
+        guard store.hasLoaded, !store.loadFailed, store.events.isEmpty else { return }
+        await store.provisionSampleEventAndReload()
     }
 
     @ViewBuilder
@@ -276,11 +298,11 @@ struct EventListView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(greeting)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(size: 14, weight: .semibold)
                     .foregroundStyle(.white.opacity(0.7))
 
                 Text("My Events")
-                    .font(.system(size: 32, weight: .bold))
+                    .scaledFont(size: 32, weight: .bold)
                     .tracking(-0.6)
                     .foregroundStyle(.white)
                     .padding(.top, 8)
@@ -302,17 +324,17 @@ struct EventListView: View {
     private func sortRow(count: Int) -> some View {
         HStack {
             Text("\(count) event\(count == 1 ? "" : "s") · sorted by date")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 13, weight: .semibold)
+                .foregroundStyle(Brand.textSecondary)
             Spacer()
             Button {
                 withAnimation(.snappy(duration: 0.2)) { sortDescending.toggle() }
             } label: {
                 HStack(spacing: 4) {
                     Text(sortDescending ? "Latest" : "Soonest")
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(size: 13, weight: .semibold)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .bold))
+                        .scaledFont(size: 11, weight: .bold)
                         .rotationEffect(.degrees(sortDescending ? 180 : 0))
                 }
                 .foregroundStyle(Brand.accent)
@@ -320,11 +342,23 @@ struct EventListView: View {
         }
     }
 
+    /// First-run copy. When the account has no way to create an event yet
+    /// (no unattached pass, no entitled plan, not grandfathered), say so up
+    /// front so the paywall behind "Create Event" isn't a surprise. Legacy
+    /// free accounts and subscribers never see the pass sentence.
+    private var emptyStateDescription: String {
+        var text = "Create your first event to start building a seating chart."
+        if let snapshot = account?.snapshot, !snapshot.canCreateEvent, !snapshot.isLegacyFree {
+            text += " Every event needs an Event Pass. Passes are one-time purchases and never expire."
+        }
+        return text
+    }
+
     private var emptyState: some View {
         ContentUnavailableView {
             Label("No events yet", systemImage: "calendar.badge.plus")
         } description: {
-            Text("Create your first event to start building a seating chart.")
+            Text(emptyStateDescription)
         } actions: {
             Button("Create Event") { createEventTapped() }
                 .buttonStyle(.borderedProminent)
@@ -378,16 +412,16 @@ private struct InviteCard: View {
                 .frame(width: 40, height: 40)
                 .overlay(
                     Image(systemName: "envelope.fill")
-                        .font(.system(size: 17, weight: .semibold))
+                        .scaledFont(size: 17, weight: .semibold)
                         .foregroundStyle(Brand.warningText)
                 )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(invite.inviterName) invited you")
-                    .font(.system(size: 15, weight: .bold))
+                    .scaledFont(size: 15, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                 Text("\(invite.roleLabel) · “\(invite.eventName)”")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.inviteSubtitle)
                     .lineLimit(1)
             }
@@ -400,10 +434,10 @@ private struct InviteCard: View {
                 Task { await onAccept(); isAccepting = false }
             } label: {
                 Text("Accept")
-                    .font(.system(size: 14, weight: .bold))
+                    .scaledFont(size: 14, weight: .bold)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
-                    .frame(height: 34)
+                    .frame(minHeight: 34)
                     .background(Brand.warningText, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     // Visual pill stays 34pt; hit target meets 44pt (A11y-5).
                     // Frame first, then contentShape — the shape must capture
@@ -444,7 +478,7 @@ private struct EventCard: View {
         HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(event.name)
-                    .font(.system(size: 18, weight: .bold))
+                    .scaledFont(size: 18, weight: .bold)
                     .tracking(-0.2)
                     .foregroundStyle(Brand.textPrimary)
                     .lineLimit(2)
@@ -452,10 +486,10 @@ private struct EventCard: View {
                 if let subtitle {
                     HStack(spacing: 6) {
                         Image(systemName: "calendar")
-                            .font(.system(size: 12, weight: .semibold))
+                            .scaledFont(size: 12, weight: .semibold)
                             .foregroundStyle(Brand.textTertiary)
                         Text(subtitle)
-                            .font(.system(size: 13))
+                            .scaledFont(size: 13)
                             .foregroundStyle(Brand.textSecondary)
                             .lineLimit(1)
                     }

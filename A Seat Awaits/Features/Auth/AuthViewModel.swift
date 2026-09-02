@@ -40,9 +40,12 @@ final class AuthViewModel {
 
     private let supabase: SupabaseClient
     private let emailService: EmailService
-    private let onAuthenticated: (AuthUser) -> Void
+    /// Called once a session exists. The flag reports whether the sample-event
+    /// provisioning call succeeded, so the app can retry it on the dashboard.
+    private let onAuthenticated: (AuthUser, _ sampleEventProvisioned: Bool) -> Void
 
-    init(supabase: SupabaseClient, onAuthenticated: @escaping (AuthUser) -> Void) {
+    init(supabase: SupabaseClient,
+         onAuthenticated: @escaping (AuthUser, _ sampleEventProvisioned: Bool) -> Void) {
         self.supabase = supabase
         self.emailService = EmailService(invoker: supabase)
         self.onAuthenticated = onAuthenticated
@@ -98,10 +101,10 @@ final class AuthViewModel {
                     // sample event exists before entering the app, so the
                     // first dashboard load already shows it. Web signups get
                     // theirs from the verification landing page; the native
-                    // app never touches that path. Best-effort — a failure
-                    // here must never block signup.
-                    await provisionSampleEvent()
-                    onAuthenticated(user)
+                    // app never touches that path. A failure must never block
+                    // signup; it is reported so the dashboard retries once.
+                    let provisioned = await EventStore.provisionSampleEvent(using: supabase)
+                    onAuthenticated(user, provisioned)
                 case .confirmationRequired:
                     // Drive the deliberate (edge + Resend) verification path,
                     // not GoTrue's default email. The view switches to the
@@ -116,30 +119,13 @@ final class AuthViewModel {
                 // Idempotent server-side (once-ever marker): heals accounts
                 // whose one-shot signup provisioning call failed, so the
                 // promised sample event can't be permanently lost to a blip.
-                await provisionSampleEvent()
-                onAuthenticated(user)
+                let provisioned = await EventStore.provisionSampleEvent(using: supabase)
+                onAuthenticated(user, provisioned)
             }
         } catch {
-            errorMessage = error.localizedDescription
+            guard !FriendlyError.isCancellation(error) else { return }
+            errorMessage = FriendlyError.message(for: error)
         }
-    }
-
-    // MARK: - Sample event
-
-    private nonisolated struct ProvisionSampleBody: Encodable, Sendable {}
-    private nonisolated struct ProvisionSampleResponse: Decodable, Sendable {
-        let ok: Bool
-        let eventId: String?
-    }
-
-    /// Asks the `provision-sample-event` Edge Function for the caller's
-    /// one-time sample event (idempotent server-side; see the function for the
-    /// contract). Errors are swallowed: the sample is a nice-to-have and the
-    /// dashboard works without it.
-    private func provisionSampleEvent() async {
-        _ = try? await supabase.invokeFunction("provision-sample-event",
-                                               body: ProvisionSampleBody(),
-                                               as: ProvisionSampleResponse.self)
     }
 
     /// Prepares the reset sheet: pre-fills the email already typed on the form
@@ -173,10 +159,11 @@ final class AuthViewModel {
                 resetSent = true
                 startCooldown(\.resetCooldownEndsAt, seconds: retry)
             } else {
-                resetError = error.localizedDescription
+                resetError = FriendlyError.message(for: error)
             }
         } catch {
-            resetError = friendly(error)
+            guard !FriendlyError.isCancellation(error) else { return }
+            resetError = FriendlyError.message(for: error)
         }
     }
 
@@ -209,10 +196,11 @@ final class AuthViewModel {
                 verificationInfo = "We sent a verification link to \(email). Check your inbox. It may take a minute."
                 startCooldown(\.verificationCooldownEndsAt, seconds: retry)
             } else {
-                verificationError = error.localizedDescription
+                verificationError = FriendlyError.message(for: error)
             }
         } catch {
-            verificationError = friendly(error)
+            guard !FriendlyError.isCancellation(error) else { return }
+            verificationError = FriendlyError.message(for: error)
         }
     }
 
@@ -230,12 +218,5 @@ final class AuthViewModel {
     private func remaining(_ endsAt: Date?) -> Int {
         guard let endsAt else { return 0 }
         return max(0, Int(ceil(endsAt.timeIntervalSinceNow)))
-    }
-
-    /// Maps offline/transport errors to friendly copy; everything else uses its
-    /// own localized description.
-    private func friendly(_ error: Error) -> String {
-        if let supa = error as? SupabaseError { return supa.errorDescription ?? "Something went wrong." }
-        return error.localizedDescription
     }
 }

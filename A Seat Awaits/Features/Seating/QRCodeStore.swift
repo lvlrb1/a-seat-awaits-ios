@@ -125,8 +125,8 @@ final class QRCodeStore {
             qrImage = image
             phase = .ready
         } catch {
-            phase = .failed((error as? LocalizedError)?.errorDescription
-                ?? "Couldn't generate the QR code. Please try again.")
+            phase = .failed(Self.message(error,
+                fallback: "Couldn't generate the QR code. Please try again."))
         }
         #else
         phase = .ready
@@ -161,20 +161,23 @@ final class QRCodeStore {
     }
 
     /// Writes the clean QR PNG to a temp file and triggers the share sheet.
+    /// The PNG encode and file write run off the main actor, like `renderQR`.
     func share() async {
         guard let shareURL else { return }
         #if canImport(UIKit)
+        let string = shareURL.absoluteString
+        let rendered = qrImage
+        let name = eventName
+        let slug = eventSlug
         do {
-            let data: Data
-            if let png = qrImage?.pngData() {
-                data = png
-            } else {
-                data = try QRCodeGenerator.png(for: shareURL.absoluteString)
-            }
-            let url = try QRImageExportFile.write(data, eventName: eventName, slug: eventSlug)
+            let url = try await Task.detached(priority: .userInitiated) {
+                let data = try rendered?.pngData() ?? QRCodeGenerator.png(for: string)
+                return try QRImageExportFile.write(data, eventName: name, slug: slug)
+            }.value
             shareItem = QRSharePayload(fileURL: url, link: shareURL, eventName: eventName)
         } catch {
-            phase = .failed("Couldn't prepare the QR image to share. Please try again.")
+            phase = .failed(Self.message(error,
+                fallback: "Couldn't prepare the QR image to share. Please try again."))
         }
         #endif
     }
@@ -193,7 +196,16 @@ final class QRCodeStore {
         }
     }
 
+    /// Server/network failures go through `FriendlyError` so no raw description
+    /// ever shows; the generator's own curated copy is kept as-is, and anything
+    /// else falls back to the caller's line.
     private static func message(_ error: Error, fallback: String) -> String {
-        (error as? LocalizedError)?.errorDescription ?? fallback
+        if let generation = error as? QRCodeGenerator.GenerationError {
+            return generation.errorDescription ?? fallback
+        }
+        if error is SupabaseError || error is URLError || FriendlyError.isOffline(error) {
+            return FriendlyError.message(for: error)
+        }
+        return fallback
     }
 }

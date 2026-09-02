@@ -126,7 +126,7 @@ nonisolated struct GuestSearchResult: Codable, Identifiable, Equatable, Sendable
     /// The numeric/short portion of the table name for the big result display
     /// (e.g. "Table 5" → "5", "VIP" → "VIP").
     var tableNumber: String {
-        guard let tableName, !tableName.isEmpty else { return "—" }
+        guard let tableName, !tableName.isEmpty else { return "?" }
         if let n = tableName.split(whereSeparator: { !$0.isNumber }).last, !n.isEmpty {
             return String(n)
         }

@@ -70,7 +70,7 @@ struct AccountSecurityView: View {
     private var passwordCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Change password")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
 
             secureField("Current password", text: $current, field: .current, content: .password)
@@ -78,7 +78,7 @@ struct AccountSecurityView: View {
             secureField("Confirm new password", text: $confirm, field: .confirm, content: .newPassword)
 
             Text("Use at least \(AccountValidation.minPasswordLength) characters.")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
 
             if let feedback {
@@ -131,10 +131,10 @@ struct AccountSecurityView: View {
     private var forgotPasswordCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Forgot your password?")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text("We'll email a reset link to \(user?.email ?? "your address").")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -168,14 +168,14 @@ struct AccountSecurityView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: user?.primaryProvider == "apple" ? "applelogo" : "person.badge.key")
-                    .font(.system(size: 20, weight: .semibold))
+                    .scaledFont(size: 20, weight: .semibold)
                     .foregroundStyle(Brand.accent)
                 Text("Signed in with \(user?.providerLabel ?? "your provider")")
-                    .font(.system(size: 16, weight: .bold))
+                    .scaledFont(size: 16, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
             }
             Text("Your sign-in and password are managed by \(user?.providerLabel ?? "your provider"), so there's no separate password to change here. To manage sign-in or recover access, use your \(user?.providerLabel ?? "provider") account settings.")
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -189,17 +189,17 @@ struct AccountSecurityView: View {
     private var sessionsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Sessions")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
-            Text("Signs you out on every device where you're logged in.")
-                .font(.system(size: 13))
+            Text("Signs you out on every device where you're signed in.")
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(role: .destructive) {
                 showingSignOutAllConfirm = true
             } label: {
                 Text("Sign Out of All Devices")
-                    .font(.system(size: 16, weight: .bold))
+                    .scaledFont(size: 16, weight: .bold)
                     .foregroundStyle(Brand.danger)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)

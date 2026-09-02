@@ -26,14 +26,26 @@ struct AddShapeView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var confirmingDelete = false
+    @State private var initialSignature = ""
+    @FocusState private var numericFocused: Bool
+
+    /// Where the canvas would like a new shape centered (see AddTableView).
+    private let suggestedPosition: CGPoint?
+    /// Called with the freshly-created shape so the canvas can select it.
+    private let onCreated: ((DecorShape) -> Void)?
 
     /// A few common landmarks to seed the name quickly.
     private let nameSuggestions = ["Dance Floor", "Stage", "Bar", "DJ Booth",
                                    "Gift Table", "Cake Table", "Buffet", "Entrance"]
 
-    init(store: SeatingStore, editing: DecorShape? = nil) {
+    init(store: SeatingStore,
+         editing: DecorShape? = nil,
+         suggestedPosition: CGPoint? = nil,
+         onCreated: ((DecorShape) -> Void)? = nil) {
         self.store = store
         self.editing = editing
+        self.suggestedPosition = suggestedPosition
+        self.onCreated = onCreated
         if let s = editing {
             _name = State(initialValue: s.name)
             _type = State(initialValue: s.type)
@@ -58,6 +70,11 @@ struct AddShapeView: View {
     private var usesSingleDimension: Bool { type == .circle || type == .square }
     private var canSave: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty }
 
+    private var signature: String {
+        "\(name)|\(type.rawValue)|\(widthFt)|\(lengthFt)|\(rotation)|\(note)"
+    }
+    private var isDirty: Bool { !initialSignature.isEmpty && signature != initialSignature }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -73,15 +90,25 @@ struct AddShapeView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isEditing ? "Save" : "Add") { Task { await save() } }
-                        .disabled(isSaving || !canSave)
+                    Button { Task { await save() } } label: {
+                        HStack(spacing: 6) {
+                            if isSaving { ProgressView().controlSize(.small) }
+                            Text(isEditing ? "Save" : "Add")
+                        }
+                    }
+                    .disabled(isSaving || !canSave)
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { numericFocused = false }
                 }
             }
-            .interactiveDismissDisabled(isSaving)
+            .interactiveDismissDisabled(isSaving || isDirty)
+            .onAppear { if initialSignature.isEmpty { initialSignature = signature } }
             .confirmationDialog("Delete \(name)?", isPresented: $confirmingDelete,
                                 titleVisibility: .visible) {
-                Button("Delete shape", role: .destructive) {
-                    if let editing { Task { await store.deleteShape(editing); dismiss() } }
+                Button("Delete Shape", role: .destructive) {
+                    if let editing { Task { await store.deleteShapeWithUndo(editing); dismiss() } }
                 }
                 Button("Cancel", role: .cancel) {}
             }
@@ -131,7 +158,7 @@ struct AddShapeView: View {
                     ForEach(nameSuggestions, id: \.self) { suggestion in
                         Button { name = suggestion } label: {
                             Text(suggestion)
-                                .font(.system(size: 13, weight: .bold))
+                                .scaledFont(size: 13, weight: .bold)
                                 .foregroundStyle(Brand.accent)
                                 .padding(.horizontal, 13)
                                 .frame(height: 34)
@@ -161,7 +188,7 @@ struct AddShapeView: View {
         Section("Rotation") {
             Stepper(value: $rotation, in: 0...345, step: 15) {
                 Text("\(Int(rotation))°")
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(size: 16, weight: .semibold)
                     .monospacedDigit()
             }
             .accessibilityLabel("Rotation")
@@ -183,6 +210,7 @@ struct AddShapeView: View {
             Spacer()
             TextField(title, value: value, format: .number.precision(.fractionLength(0...1)))
                 .keyboardType(.decimalPad)
+                .focused($numericFocused)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: 90)
         }
@@ -213,16 +241,23 @@ struct AddShapeView: View {
                 store.errorMessage = nil
             }
         } else {
-            let offset = Double(store.shapes.count % 4) * 30
+            // Land the shape where the planner is looking, on the nearest
+            // clear spot (see AddTableView).
+            let anchor = suggestedPosition.map { (x: Double($0.x), y: Double($0.y)) }
+                ?? store.defaultPlacementAnchor
+            let spot = FloorPlanGeometry.freePosition(near: anchor,
+                                                      size: (widthPx, heightPx),
+                                                      among: store.placementObstacles)
             do {
                 let created = try await store.addShape(name: finalName, type: type,
                                                        width: widthPx, height: heightPx,
-                                                       positionX: 120 + offset, positionY: 120 + offset,
+                                                       positionX: spot.x, positionY: spot.y,
                                                        description: description)
                 if !isRound && rotation != 0 {
                     await store.updateShapeRotation(of: created, to: rotation)
                 }
                 dismiss()
+                onCreated?(created)
             } catch {
                 errorMessage = FriendlyError.message(for: error)
             }

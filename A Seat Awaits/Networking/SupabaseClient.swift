@@ -10,8 +10,27 @@
 //  Implemented as an `actor` so the cached session/token can be mutated safely
 //  from concurrent callers and refreshed transparently before each request.
 //
+//  Robustness notes:
+//   - Token refresh is single-flight. Actor reentrancy means five parallel
+//     selects (e.g. `SeatingStore.loadAll`) could each observe an expiring
+//     token and each POST the same rotating refresh token; GoTrue rejects the
+//     replays and the session dies. `refreshToken()` shares one in-flight task.
+//   - An authenticated request that comes back 401 forces one refresh and is
+//     retried exactly once. If the refresh itself is rejected (4xx), the session
+//     is cleared and `sessionEvents()` subscribers (AppState) flip the app to
+//     signed-out with a friendly message.
+//   - `URLError.cancelled` surfaces as `CancellationError`, never as a
+//     transport failure, so a `.task` cancelled by navigation stays silent.
+//
 
 import Foundation
+
+/// Session lifecycle events broadcast by `SupabaseClient.sessionEvents()`.
+nonisolated enum SupabaseSessionEvent: Sendable, Equatable {
+    /// The refresh token was rejected by the server and the local session was
+    /// cleared. The app must return to the signed-out state.
+    case sessionInvalidated
+}
 
 actor SupabaseClient {
 
@@ -22,6 +41,12 @@ actor SupabaseClient {
 
     /// In-memory cache of the current session (also persisted in the Keychain).
     private var session: AuthSession?
+
+    /// The single in-flight refresh, shared by every concurrent caller.
+    private var refreshTask: Task<Void, Error>?
+
+    /// Live subscribers to session lifecycle events.
+    private var sessionEventContinuations: [UUID: AsyncStream<SupabaseSessionEvent>.Continuation] = [:]
 
     // MARK: - Init
 
@@ -50,6 +75,29 @@ actor SupabaseClient {
         }
     }
 
+    /// A stream of session lifecycle events. `AppState` subscribes so a dead
+    /// refresh token (detected mid-request, long after launch) flips the root
+    /// view to signed-out instead of leaving every screen erroring.
+    func sessionEvents() -> AsyncStream<SupabaseSessionEvent> {
+        let (stream, continuation) = AsyncStream<SupabaseSessionEvent>.makeStream()
+        let id = UUID()
+        sessionEventContinuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeSessionEventContinuation(id) }
+        }
+        return stream
+    }
+
+    private func removeSessionEventContinuation(_ id: UUID) {
+        sessionEventContinuations[id] = nil
+    }
+
+    private func broadcast(_ event: SupabaseSessionEvent) {
+        for continuation in sessionEventContinuations.values {
+            continuation.yield(event)
+        }
+    }
+
     /// Restores a persisted session, refreshing the token if needed. Returns the
     /// user when a valid session exists, otherwise nil.
     func restoreSession() async -> AuthUser? {
@@ -57,9 +105,9 @@ actor SupabaseClient {
         if existing.isExpiring {
             do {
                 try await refreshToken()
-            } catch SupabaseError.http(let status, _) where (400..<500).contains(status) {
-                // Definitive auth rejection — the refresh token is dead.
-                setSession(nil)
+            } catch SupabaseError.notAuthenticated {
+                // Definitive auth rejection — the refresh token is dead and
+                // `refreshToken()` already cleared the session.
                 return nil
             } catch {
                 // Transient failure (offline, timeout, 5xx): keep the stored
@@ -67,7 +115,7 @@ actor SupabaseClient {
                 // `validAccessToken` retries the refresh before every request
                 // once connectivity returns. Wiping the Keychain here would
                 // sign the user out over a network blip at launch.
-                return existing.user
+                return session?.user ?? existing.user
             }
         }
         return session?.user
@@ -140,8 +188,9 @@ actor SupabaseClient {
     /// the fields a persisted session omits (provider, verification timestamps,
     /// creation date, pending email change). Does not mutate the cached session.
     func fetchCurrentUser() async throws -> AuthUser {
-        let token = try await validAccessToken()
-        let data = try await userRequest(method: "GET", body: Optional<EmptyBody>.none, accessToken: token)
+        let data = try await performAuthenticated { token in
+            try self.userRequest(method: "GET", body: Optional<EmptyBody>.none, accessToken: token)
+        }
         return try decode(AuthUser.self, from: data)
     }
 
@@ -166,8 +215,9 @@ actor SupabaseClient {
         body.password = password
         if let fullName { body.data = Metadata(full_name: fullName) }
 
-        let token = try await validAccessToken()
-        let data = try await userRequest(method: "PUT", body: body, accessToken: token)
+        let data = try await performAuthenticated { token in
+            try self.userRequest(method: "PUT", body: body, accessToken: token)
+        }
         let updated = try decode(AuthUser.self, from: data)
 
         // Reconcile the cached session's user (token is unchanged by an update).
@@ -180,7 +230,8 @@ actor SupabaseClient {
 
     /// Fetches the GoTrue user for an arbitrary access token (not the cached one).
     private func fetchUser(withAccessToken token: String) async throws -> AuthUser {
-        let data = try await userRequest(method: "GET", body: Optional<EmptyBody>.none, accessToken: token)
+        let request = try userRequest(method: "GET", body: Optional<EmptyBody>.none, accessToken: token)
+        let data = try await perform(request)
         return try decode(AuthUser.self, from: data)
     }
 
@@ -213,14 +264,48 @@ actor SupabaseClient {
         setSession(session)
     }
 
+    // MARK: - Token refresh (single-flight)
+
+    /// Refreshes the session. Concurrent callers share one in-flight refresh
+    /// rather than each replaying the same (rotating) refresh token.
+    ///
+    /// Throws `SupabaseError.notAuthenticated` when there is no session or the
+    /// server definitively rejected the refresh token (4xx); in the latter case
+    /// the session is cleared and `.sessionInvalidated` is broadcast. Transient
+    /// failures (offline, 5xx) rethrow unchanged and keep the session.
     private func refreshToken() async throws {
+        if let inFlight = refreshTask {
+            try await inFlight.value
+            return
+        }
+        guard session?.refreshToken != nil else { throw SupabaseError.notAuthenticated }
+
+        let task = Task<Void, Error> {
+            defer { refreshTask = nil }
+            try await performRefresh()
+        }
+        refreshTask = task
+        try await task.value
+    }
+
+    private func performRefresh() async throws {
         guard let refresh = session?.refreshToken else { throw SupabaseError.notAuthenticated }
         struct Body: Encodable { let refresh_token: String }
-        let data = try await authRequest(path: "token",
-                                         query: [URLQueryItem(name: "grant_type", value: "refresh_token")],
-                                         body: Body(refresh_token: refresh))
-        let refreshed = try decode(AuthSession.self, from: data)
-        setSession(refreshed)
+        do {
+            let data = try await authRequest(path: "token",
+                                             query: [URLQueryItem(name: "grant_type", value: "refresh_token")],
+                                             body: Body(refresh_token: refresh))
+            let refreshed = try decode(AuthSession.self, from: data)
+            setSession(refreshed)
+        } catch SupabaseError.http(let status, _) where (400..<500).contains(status) {
+            // Only invalidate if nobody else has already replaced the session
+            // (e.g. a fresh sign-in landed while this refresh was in flight).
+            if session?.refreshToken == refresh {
+                setSession(nil)
+                broadcast(.sessionInvalidated)
+            }
+            throw SupabaseError.notAuthenticated
+        }
     }
 
     /// Returns a valid access token, refreshing first if it is about to expire.
@@ -299,7 +384,19 @@ actor SupabaseClient {
         } catch {
             throw EdgeFunctionError.sessionExpired
         }
-        let data = try await functionRequest(name: name, body: body, accessToken: token)
+        let data: Data
+        do {
+            data = try await performFunction(try functionRequest(name: name, body: body, accessToken: token))
+        } catch EdgeFunctionError.sessionExpired {
+            // A 401 with a token we believed valid: refresh once and retry once.
+            let fresh: String
+            do {
+                fresh = try await tokenAfterForcedRefresh(rejected: token)
+            } catch {
+                throw EdgeFunctionError.sessionExpired
+            }
+            data = try await performFunction(try functionRequest(name: name, body: body, accessToken: fresh))
+        }
         return try decode(T.self, from: data)
     }
 
@@ -307,7 +404,7 @@ actor SupabaseClient {
     /// no Bearer token — used by verification / password-reset before sign-in.
     func invokePublicFunction<Body: Encodable & Sendable, T: Decodable & Sendable>(
         _ name: String, body: Body, as type: T.Type) async throws -> T {
-        let data = try await functionRequest(name: name, body: body, accessToken: nil)
+        let data = try await performFunction(try functionRequest(name: name, body: body, accessToken: nil))
         return try decode(T.self, from: data)
     }
 
@@ -317,7 +414,7 @@ actor SupabaseClient {
 
     private func functionRequest<Body: Encodable>(name: String,
                                                   body: Body,
-                                                  accessToken: String?) async throws -> Data {
+                                                  accessToken: String?) throws -> URLRequest {
         var request = URLRequest(url: baseURL.appendingPathComponent("functions/v1/\(name)"))
         request.httpMethod = "POST"
         // AI-backed functions (e.g. guest import) can run for tens of seconds, well
@@ -330,7 +427,7 @@ actor SupabaseClient {
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try encoder.encode(body)
-        return try await performFunction(request)
+        return request
     }
 
     /// Like `perform`, but decodes the edge functions' structured error body so
@@ -341,17 +438,7 @@ actor SupabaseClient {
         do {
             (data, response) = try await urlSession.data(for: request)
         } catch {
-            if let urlError = error as? URLError {
-                switch urlError.code {
-                case .notConnectedToInternet, .networkConnectionLost,
-                     .timedOut, .cannotConnectToHost, .cannotFindHost,
-                     .dataNotAllowed, .internationalRoamingOff:
-                    throw SupabaseError.offline
-                default:
-                    break
-                }
-            }
-            throw SupabaseError.transport(error.localizedDescription)
+            throw Self.mapTransportError(error)
         }
         guard let http = response as? HTTPURLResponse else {
             throw SupabaseError.transport("No HTTP response.")
@@ -386,10 +473,10 @@ actor SupabaseClient {
         return try await perform(request)
     }
 
-    /// GET/PUT the GoTrue user endpoint (`auth/v1/user`) with a bearer token.
+    /// Builds a GET/PUT request for the GoTrue user endpoint (`auth/v1/user`).
     private func userRequest<Body: Encodable>(method: String,
                                               body: Body?,
-                                              accessToken: String) async throws -> Data {
+                                              accessToken: String) throws -> URLRequest {
         var request = URLRequest(url: baseURL.appendingPathComponent("auth/v1/user"))
         request.httpMethod = method
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
@@ -399,7 +486,7 @@ actor SupabaseClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try encoder.encode(body)
         }
-        return try await perform(request)
+        return request
     }
 
     private func restRequest<Body: Encodable>(method: String,
@@ -407,21 +494,53 @@ actor SupabaseClient {
                                               query: [URLQueryItem],
                                               body: Body?,
                                               prefer: String? = nil) async throws -> Data {
-        let token = try await validAccessToken()
         var comps = URLComponents(url: baseURL.appendingPathComponent("rest/v1/\(table)"),
                                   resolvingAgainstBaseURL: false)!
         if !query.isEmpty { comps.queryItems = query }
-        var request = URLRequest(url: comps.url!)
-        request.httpMethod = method
-        request.setValue(anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let prefer { request.setValue(prefer, forHTTPHeaderField: "Prefer") }
-        if let body {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try encoder.encode(body)
+        let url = comps.url!
+        // Encode once; the body doesn't change between the attempt and a retry.
+        let encodedBody: Data? = try body.map { try encoder.encode($0) }
+
+        return try await performAuthenticated { token in
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.setValue(self.anonKey, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if let prefer { request.setValue(prefer, forHTTPHeaderField: "Prefer") }
+            if let encodedBody {
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = encodedBody
+            }
+            return request
         }
-        return try await perform(request)
+    }
+
+    /// Performs a request that carries the cached session's bearer token. On a
+    /// 401 the token is refreshed once (single-flight) and the request retried
+    /// exactly once; a second 401 propagates. If the refresh is rejected, the
+    /// session is cleared, `.sessionInvalidated` is broadcast and
+    /// `SupabaseError.notAuthenticated` is thrown.
+    private func performAuthenticated(_ build: (String) throws -> URLRequest) async throws -> Data {
+        let token = try await validAccessToken()
+        do {
+            return try await perform(try build(token))
+        } catch SupabaseError.http(let status, _) where status == 401 {
+            let fresh = try await tokenAfterForcedRefresh(rejected: token)
+            return try await perform(try build(fresh))
+        }
+    }
+
+    /// After a 401 with `rejected`: if another caller already rotated the
+    /// session, reuse the new token; otherwise force one refresh. Throws
+    /// `notAuthenticated` when the refresh is definitively rejected.
+    private func tokenAfterForcedRefresh(rejected: String) async throws -> String {
+        if let current = session?.accessToken, current != rejected {
+            return current
+        }
+        try await refreshToken()
+        guard let fresh = session?.accessToken else { throw SupabaseError.notAuthenticated }
+        return fresh
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
@@ -430,30 +549,41 @@ actor SupabaseClient {
         do {
             (data, response) = try await urlSession.data(for: request)
         } catch {
-            // Map common connectivity failures to a dedicated offline case so the
-            // UI can surface an offline state rather than a raw URLError string.
-            if let urlError = error as? URLError {
-                switch urlError.code {
-                case .notConnectedToInternet, .networkConnectionLost,
-                     .timedOut, .cannotConnectToHost, .cannotFindHost,
-                     .dataNotAllowed, .internationalRoamingOff:
-                    throw SupabaseError.offline
-                default:
-                    break
-                }
-            }
-            throw SupabaseError.transport(error.localizedDescription)
+            throw Self.mapTransportError(error)
         }
         guard let http = response as? HTTPURLResponse else {
             throw SupabaseError.transport("No HTTP response.")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let message = (try? decoder.decode(SupabaseErrorBody.self, from: data))?.bestMessage
+            let parsed = try? decoder.decode(SupabaseErrorBody.self, from: data)
+            let message = parsed?.bestMessage
+                ?? parsed?.errorCode
                 ?? String(data: data, encoding: .utf8)
                 ?? ""
             throw SupabaseError.http(status: http.statusCode, message: message)
         }
         return data
+    }
+
+    /// Maps a `URLSession` failure to the client's error vocabulary: common
+    /// connectivity failures become `.offline` so the UI can surface an offline
+    /// state; a cancelled load (a `.task` torn down by navigation) becomes
+    /// `CancellationError` so callers can ignore it instead of alerting.
+    nonisolated static func mapTransportError(_ error: Error) -> Error {
+        if error is CancellationError { return error }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cancelled:
+                return CancellationError()
+            case .notConnectedToInternet, .networkConnectionLost,
+                 .timedOut, .cannotConnectToHost, .cannotFindHost,
+                 .dataNotAllowed, .internationalRoamingOff:
+                return SupabaseError.offline
+            default:
+                break
+            }
+        }
+        return SupabaseError.transport(error.localizedDescription)
     }
 
     // MARK: - Coders

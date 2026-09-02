@@ -50,6 +50,13 @@ struct CreateEventView: View {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && !isSaving
     }
 
+    /// Anything typed or picked that a swipe-to-dismiss would throw away.
+    private var isDirty: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+            || !location.trimmingCharacters(in: .whitespaces).isEmpty
+            || hasDate
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Grabber()
@@ -69,19 +76,21 @@ struct CreateEventView: View {
                     passBanner
 
                     LabeledField(title: "Event name", isFocused: focused == .name) {
-                        TextField("Patel–Rossi Wedding", text: $name)
+                        TextField("Ruiz & Chen Wedding", text: $name)
                             .focused($focused, equals: .name)
                             .submitLabel(.next)
+                            .onSubmit { focused = .venue }
                     }
 
                     LabeledField(title: "Date") {
                         Button { showingDatePicker = true } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "calendar")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(Brand.slate400)
-                                Text(hasDate ? Self.dateDisplay.string(from: date) : "Pick a date")
-                                    .foregroundStyle(hasDate ? Brand.textPrimary : Brand.slate400)
+                                    .scaledFont(size: 15, weight: .semibold)
+                                    .foregroundStyle(Brand.textSecondary)
+                                    .accessibilityHidden(true)
+                                Text(hasDate ? Self.dateDisplay.string(from: date) : "Pick a Date")
+                                    .foregroundStyle(hasDate ? Brand.textPrimary : Brand.textSecondary)
                                 Spacer(minLength: 0)
                             }
                             // The field chrome lives in LabeledField, outside this
@@ -91,24 +100,31 @@ struct CreateEventView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(hasDate ? "Date, \(Self.dateDisplay.string(from: date))" : "Date, not set")
+                        .accessibilityHint("Opens a calendar to pick the event date")
                     }
 
                     LabeledField(title: "Venue", isFocused: focused == .venue) {
                         HStack(spacing: 8) {
                             Image(systemName: "mappin.and.ellipse")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Brand.slate400)
+                                .scaledFont(size: 15, weight: .semibold)
+                                .foregroundStyle(Brand.textSecondary)
+                                .accessibilityHidden(true)
                             TextField("Cedar Hall, Portland", text: $location)
+                                .textContentType(.location)
                                 .focused($focused, equals: .venue)
+                                .submitLabel(.done)
+                                .onSubmit { focused = nil }
                         }
                     }
 
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 14, weight: .bold))
+                            .scaledFont(size: 14, weight: .bold)
                             .foregroundStyle(Brand.success)
+                            .accessibilityHidden(true)
                         Text("You can import the guest list right after.")
-                            .font(.system(size: 14))
+                            .scaledFont(size: 14)
                             .foregroundStyle(Brand.slate600)
                     }
                     .padding(.horizontal, 2)
@@ -125,17 +141,26 @@ struct CreateEventView: View {
             }
             .scrollDismissesKeyboard(.interactively)
 
-            Button("Create Event") { Task { await create() } }
-                .buttonStyle(.primaryBrand)
-                .disabled(!canCreate)
-                .opacity(canCreate ? 1 : 0.5)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+            Button {
+                Task { await create() }
+            } label: {
+                if isSaving {
+                    HStack(spacing: 8) { ProgressView().tint(.white); Text("Creating…") }
+                } else {
+                    Text("Create Event")
+                }
+            }
+            .buttonStyle(PrimaryButtonStyle(isLoading: isSaving))
+            .disabled(!canCreate)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
         }
         .padding(.horizontal, 26)
         .background(Brand.card.ignoresSafeArea())
         .presentationDragIndicator(.hidden)
-        .interactiveDismissDisabled(isSaving)
+        // A swipe must not silently discard a half-filled form; Cancel in the
+        // header remains the explicit way out.
+        .interactiveDismissDisabled(isSaving || isDirty)
         .sheet(isPresented: $showingDatePicker) {
             datePickerSheet
         }
@@ -164,19 +189,19 @@ struct CreateEventView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "ticket")
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(size: 15, weight: .semibold)
                         .foregroundStyle(Brand.accent)
                     Text(unattachedPasses.count == 1
                          ? "Your \(pass.tierDisplayName) is ready"
                          : "You have \(unattachedPasses.count) unused passes")
-                        .font(.system(size: 15, weight: .bold))
+                        .scaledFont(size: 15, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                 }
 
                 Text(unattachedPasses.count == 1
                      ? "It attaches to this event automatically when you create it, with no extra checkout step. Covers up to \(pass.guestCap.formatted()) guests."
                      : "Choose which pass covers this event. It attaches when you create it, with no extra checkout step.")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -207,16 +232,17 @@ struct CreateEventView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18, weight: .semibold))
+                    .scaledFont(size: 18, weight: .semibold)
                     .foregroundStyle(isSelected ? Brand.accent : Brand.slate300)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(option.tierDisplayName) · up to \(option.guestCap.formatted()) guests")
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(size: 14, weight: .semibold)
                         .foregroundStyle(Brand.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let bought = AccountDate.medium(option.purchasedAt) {
                         Text("Bought \(bought)")
-                            .font(.system(size: 12))
+                            .scaledFont(size: 12)
                             .foregroundStyle(Brand.textSecondary)
                     }
                 }
@@ -244,7 +270,7 @@ struct CreateEventView: View {
                 .datePickerStyle(.graphical)
                 .tint(Brand.plum)
                 .padding()
-                .navigationTitle("Pick a date")
+                .navigationTitle("Pick a Date")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {

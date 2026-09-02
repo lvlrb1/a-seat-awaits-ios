@@ -101,11 +101,13 @@ final class FloorPlanActivityItem: NSObject, UIActivityItemSource {
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
     /// Called when the activity sheet is dismissed (after sharing or cancel).
-    var onComplete: (() -> Void)? = nil
+    /// Called when the activity sheet closes; `true` only when the user
+    /// completed an activity (shared/saved), `false` on cancel.
+    var onComplete: ((Bool) -> Void)? = nil
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        controller.completionWithItemsHandler = { _, _, _, _ in onComplete?() }
+        controller.completionWithItemsHandler = { _, completed, _, _ in onComplete?(completed) }
         return controller
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}

@@ -14,15 +14,21 @@ import SwiftUI
 struct GuestDetailSheet: View {
     @Bindable var store: SeatingStore
     let guest: Guest
+    /// "Pick a Table on the Floor Plan": the presenter dismisses this sheet
+    /// and hands the guest to the canvas's assign mode. Nil hides the button.
+    var onPickOnFloorPlan: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTableId: String?
     @State private var isSaving = false
     @State private var tableSearch = ""
+    /// Why the last seat attempt didn't land (the sheet stays open to retry).
+    @State private var saveError: String?
 
-    init(store: SeatingStore, guest: Guest) {
+    init(store: SeatingStore, guest: Guest, onPickOnFloorPlan: (() -> Void)? = nil) {
         self.store = store
         self.guest = guest
+        self.onPickOnFloorPlan = onPickOnFloorPlan
         _selectedTableId = State(initialValue: guest.tableId)
     }
 
@@ -84,10 +90,13 @@ struct GuestDetailSheet: View {
         HStack {
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(size: 14, weight: .semibold)
                     .foregroundStyle(Brand.textSecondary)
                     .frame(width: 32, height: 32)
                     .background(Brand.control, in: Circle())
+                    // 32pt visual, 44pt hit target.
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Close")
 
@@ -107,7 +116,7 @@ struct GuestDetailSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 TitleBadgeRow(badgeAtTrailing: true) {
                     Text(guest.name)
-                        .font(.system(size: 22, weight: .heavy))
+                        .scaledFont(size: 22, weight: .heavy)
                         .tracking(-0.2)
                         .foregroundStyle(Brand.textPrimary)
                 } badge: {
@@ -115,7 +124,7 @@ struct GuestDetailSheet: View {
                 }
                 if let household = householdLine {
                     Text(household)
-                        .font(.system(size: 14))
+                        .scaledFont(size: 14)
                         .foregroundStyle(Brand.textSecondary)
                 }
             }
@@ -172,10 +181,11 @@ struct GuestDetailSheet: View {
     private func noteRow(_ notes: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "note.text")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 13, weight: .semibold)
+                .foregroundStyle(Brand.textSecondary)
+                .accessibilityHidden(true)
             Text(notes)
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .lineSpacing(2)
                 .foregroundStyle(Brand.textSecondary)
                 .lineLimit(3)
@@ -189,16 +199,39 @@ struct GuestDetailSheet: View {
     private var assignHeader: some View {
         VStack(alignment: .leading, spacing: 11) {
             Text("Assign to a table")
-                .font(.system(size: 15, weight: .bold))
+                .scaledFont(size: 15, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
 
             if store.tables.isEmpty {
                 Text("No tables yet. Add a table from the Tables tab first.")
-                    .font(.system(size: 14))
+                    .scaledFont(size: 14)
                     .foregroundStyle(Brand.textSecondary)
                     .padding(.vertical, 8)
             } else {
                 SearchField(text: $tableSearch, placeholder: "Search tables", height: 42)
+
+                if let onPickOnFloorPlan {
+                    // The visual route: dismiss, switch to the plan, tap a seat.
+                    Button {
+                        onPickOnFloorPlan()
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "map")
+                                .scaledFont(size: 14, weight: .bold)
+                            Text("Pick a Table on the Floor Plan")
+                                .scaledFont(size: 14, weight: .bold)
+                        }
+                        .foregroundStyle(Brand.accent)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(Brand.accent.opacity(0.1),
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSaving)
+                }
             }
         }
         .padding(.top, 20)
@@ -210,7 +243,7 @@ struct GuestDetailSheet: View {
             let tables = visibleTables
             if tables.isEmpty {
                 Text("No tables match “\(tableSearch)”.")
-                    .font(.system(size: 14))
+                    .scaledFont(size: 14)
                     .foregroundStyle(Brand.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
@@ -234,16 +267,16 @@ struct GuestDetailSheet: View {
                 tableBadge(table, selected: isSelected)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tableTitle(table))
-                        .font(.system(size: 15, weight: .bold))
+                        .scaledFont(size: 15, weight: .bold)
                         .foregroundStyle(isSelected ? Brand.plum : Brand.textPrimary)
                     Text(seatsLine(for: table))
-                        .font(.system(size: 12, weight: .semibold))
+                        .scaledFont(size: 12, weight: .semibold)
                         .foregroundStyle(seatsColor(for: table, isSelected: isSelected))
                 }
                 Spacer(minLength: 4)
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 22))
+                        .scaledFont(size: 22)
                         .foregroundStyle(Brand.plum)
                         .accessibilityLabel("Selected")
                 }
@@ -276,7 +309,7 @@ struct GuestDetailSheet: View {
             .frame(width: 34, height: 34)
             .overlay(
                 Text(tableShortLabel(table))
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(size: 13, weight: .bold)
                     .foregroundStyle(selected ? .white : Brand.slate600)
             )
     }
@@ -343,9 +376,15 @@ struct GuestDetailSheet: View {
     @ViewBuilder
     private var ctaBar: some View {
         VStack(spacing: 8) {
+            if let saveError {
+                Label(saveError, systemImage: "exclamationmark.circle.fill")
+                    .scaledFont(size: 13, weight: .semibold)
+                    .foregroundStyle(Brand.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if let warning = overCapacityWarning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.warningText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -353,8 +392,12 @@ struct GuestDetailSheet: View {
                 seat()
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 16, weight: .heavy))
+                    if isSaving {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "checkmark")
+                            .scaledFont(size: 16, weight: .heavy)
+                    }
                     Text(ctaTitle)
                 }
             }
@@ -380,10 +423,20 @@ struct GuestDetailSheet: View {
     private func seat() {
         guard let tableId = targetTableId else { return }
         isSaving = true
+        saveError = nil
         Task {
+            store.errorMessage = nil
             await store.assignWithUndo(guest, toTable: tableId)
             isSaving = false
-            dismiss()
+            // Only leave once the guest really sits there; the store rolls a
+            // failed write back, so the local row is the source of truth.
+            if store.guests.first(where: { $0.id == guest.id })?.tableId == tableId {
+                dismiss()
+            } else {
+                saveError = store.errorMessage
+                    ?? "Couldn't seat \(guest.name). Check your connection and try again."
+                store.errorMessage = nil
+            }
         }
     }
 }

@@ -37,10 +37,15 @@ nonisolated struct SupabaseErrorBody: Decodable {
     let errorDescription: String?
     let msg: String?
     let hint: String?
+    /// GoTrue's machine-readable code (e.g. `invalid_credentials`,
+    /// `email_not_confirmed`, `user_already_exists`). Used as the message of
+    /// last resort so `FriendlyError` can still recognise the failure.
+    let errorCode: String?
 
     enum CodingKeys: String, CodingKey {
         case message, error, hint, msg
         case errorDescription = "error_description"
+        case errorCode = "error_code"
     }
 
     var bestMessage: String? {

@@ -118,7 +118,7 @@ struct ImportGuestsView: View {
             }
             .background(Brand.canvas)
             .safeAreaInset(edge: .top) {
-                SheetHeader(title: "Import guests", onCancel: { dismiss() })
+                SheetHeader(title: "Import Guests", onCancel: { dismiss() })
                     .padding(.horizontal, 20)
                     .padding(.top, 8)
                     .background(Brand.canvas)
@@ -167,19 +167,20 @@ struct ImportGuestsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 16, weight: .bold))
+                    .scaledFont(size: 16, weight: .bold)
                     .foregroundStyle(Brand.purple)
-                Text("AI import is included with a Standard or Premium Event Pass, or the Pro plan.")
-                    .font(.system(size: 13, weight: .semibold))
+                    .accessibilityHidden(true)
+                Text("AI import is included with a Standard or Premium Event Pass, or with Pro.")
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.accent)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
             Text("Typed or pasted names still import with the built-in parser. Upgrade to structure messy lists and Excel files with AI.")
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("View plans") { showingPaywall = true }
+            Button("View Plans") { showingPaywall = true }
                 .buttonStyle(.secondaryOutline)
         }
         .padding(.horizontal, 14)
@@ -194,10 +195,11 @@ struct ImportGuestsView: View {
     private var aiBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.purple)
+                .accessibilityHidden(true)
             Text("We'll organize your list into guests you can review before importing.")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.accent)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -217,10 +219,10 @@ struct ImportGuestsView: View {
     private func roomHint(_ room: Int) -> some View {
         HStack(spacing: 7) {
             Image(systemName: "person.2")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.textSecondary)
             Text("Room for \(room.formatted()) more \(room == 1 ? "guest" : "guests") on \(store.entitlement.guestCapSourceLabel).")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(size: 12, weight: .medium)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -231,15 +233,16 @@ struct ImportGuestsView: View {
     private var capacityBanner: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Guest limit reached", systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.warningText)
             Text("This event has \(store.guests.count) of \(store.entitlement.guestCap) guests on \(store.entitlement.guestCapSourceLabel). Upgrade to import more.")
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("View plans") { showingPaywall = true }
-                .font(.system(size: 13, weight: .semibold))
+            Button("View Plans") { showingPaywall = true }
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.accent)
+                .frame(minHeight: 44)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -260,30 +263,31 @@ struct ImportGuestsView: View {
                 .frame(width: 56, height: 56)
                 .overlay(
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 24, weight: .bold))
+                        .scaledFont(size: 24, weight: .bold)
                         .foregroundStyle(.white)
                 )
                 .shadow(color: Brand.plum.opacity(0.5), radius: 12, x: 0, y: 10)
+                .accessibilityHidden(true)
 
             Text("Upload a file")
-                .font(.system(size: 17, weight: .bold))
+                .scaledFont(size: 17, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
                 .padding(.top, 14)
 
             Text(aiAllowed ? "Excel, CSV or text file · tap to browse"
                            : "CSV or text file · tap to browse")
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .padding(.top, 4)
 
             Text(aiAllowed ? "Supports .xlsx, .xls, .csv and plain text."
                            : "Supports .csv and plain text. Excel needs AI import.")
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textTertiary)
                 .multilineTextAlignment(.center)
                 .padding(.top, 3)
 
-            Button("Choose file") { showFileImporter = true }
+            Button("Choose File") { showFileImporter = true }
                 .buttonStyle(.secondaryOutline)
                 .frame(width: 160)
                 .padding(.top, 14)
@@ -301,11 +305,13 @@ struct ImportGuestsView: View {
                 .foregroundStyle(Brand.slate300)
         )
         // The copy says "tap to browse" — the whole card must honor that, not
-        // just the small "Choose file" pill (which keeps working; taps inside
+        // just the small "Choose File" pill (which keeps working; taps inside
         // it are consumed by the Button before reaching this gesture).
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onTapGesture { showFileImporter = true }
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens the file browser")
     }
 
     // MARK: - Selected spreadsheet chip
@@ -313,16 +319,16 @@ struct ImportGuestsView: View {
     private func selectedFileChip(_ file: PickedFile) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "doc.fill")
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(size: 16, weight: .semibold)
                 .foregroundStyle(Brand.purple)
             VStack(alignment: .leading, spacing: 1) {
                 Text(file.name)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(size: 14, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text("Ready to structure")
-                    .font(.system(size: 12))
+                    .scaledFont(size: 12)
                     .foregroundStyle(Brand.textSecondary)
             }
             Spacer(minLength: 0)
@@ -330,8 +336,10 @@ struct ImportGuestsView: View {
                 pickedFile = nil
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 20))
+                    .scaledFont(size: 20)
                     .foregroundStyle(Brand.textTertiary)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Remove file")
@@ -351,7 +359,7 @@ struct ImportGuestsView: View {
         HStack(spacing: 14) {
             Rectangle().fill(Brand.separator).frame(height: 1)
             Text("or type names, one per line")
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(size: 13, weight: .medium)
                 .foregroundStyle(Brand.textTertiary)
                 .fixedSize()
             Rectangle().fill(Brand.separator).frame(height: 1)
@@ -364,7 +372,7 @@ struct ImportGuestsView: View {
         ZStack(alignment: .topLeading) {
             if pasteText.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: 13, design: .monospaced))
+                    .scaledFont(size: 13, design: .monospaced)
                     .foregroundStyle(Brand.textTertiary)
                     .lineSpacing(5)
                     .padding(.horizontal, 20)
@@ -372,7 +380,7 @@ struct ImportGuestsView: View {
                     .allowsHitTesting(false)
             }
             TextEditor(text: $pasteText)
-                .font(.system(size: 13, design: .monospaced))
+                .scaledFont(size: 13, design: .monospaced)
                 .foregroundStyle(Brand.textPrimary)
                 .tint(Brand.plum)
                 .lineSpacing(5)
@@ -402,7 +410,7 @@ struct ImportGuestsView: View {
                     // Sparkles promise AI — show a plain glyph when the list
                     // will be structured by the on-device parser instead.
                     Image(systemName: aiAllowed ? "sparkles" : "text.badge.checkmark")
-                        .font(.system(size: 18, weight: .bold))
+                        .scaledFont(size: 18, weight: .bold)
                     Text("Submit")
                 }
             }

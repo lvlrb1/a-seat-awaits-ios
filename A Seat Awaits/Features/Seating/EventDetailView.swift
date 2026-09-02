@@ -28,6 +28,9 @@ struct EventDetailView: View {
     /// returns only the purchaser's rows, so collaborators see nothing).
     @State private var eventPass: EventPass?
     @State private var showingPassUpgrade = false
+    /// The guest being steered to a seat on the floor plan ("Seat on Floor
+    /// Plan" from the Guests tab). Non-nil puts the Tables tab in assign mode.
+    @State private var seatingGuest: Guest?
 
     /// Anything worth putting in a floor-plan PDF.
     private var hasFloorPlan: Bool {
@@ -50,9 +53,14 @@ struct EventDetailView: View {
             Group {
                 switch selection {
                 case 0:
-                    GuestListView(store: store)
+                    GuestListView(store: store) { guest in
+                        seatingGuest = guest
+                        withAnimation(.snappy(duration: 0.2)) { selection = 1 }
+                    }
                 case 1:
-                    FloorPlanView(store: store)
+                    FloorPlanView(store: store,
+                                  assigning: seatingGuest,
+                                  onFinishAssigning: { seatingGuest = nil })
                 default:
                     moreTab
                 }
@@ -61,6 +69,11 @@ struct EventDetailView: View {
         }
         .background(Brand.canvas)
         .undoSnackbar(store.undo)
+        // Leaving the Tables tab mid-assign cancels the assign, so a stale
+        // "SEATING" banner never greets the planner on their way back.
+        .onChange(of: selection) { _, newValue in
+            if newValue != 1 { seatingGuest = nil }
+        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -97,6 +110,7 @@ struct EventDetailView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityLabel("Add guest or table")
                 }
             }
         }
@@ -146,8 +160,15 @@ struct EventDetailView: View {
             }
         }
         .task {
-            await store.loadAll()
-            await loadEventPass()
+            // Only the first appearance loads; the store keeps the workspace
+            // warm across tab switches and re-appearances. Pull-to-refresh on
+            // the Guests tab remains the explicit reload.
+            if store.guests.isEmpty && store.tables.isEmpty {
+                await store.loadAll()
+            }
+            if eventPass == nil {
+                await loadEventPass()
+            }
         }
         .alert("Something went wrong",
                isPresented: Binding(get: { store.errorMessage != nil },
@@ -166,7 +187,7 @@ struct EventDetailView: View {
                 // The back affordance is provided by the native nav bar.
                 Spacer(minLength: 0)
                 Text(event.name)
-                    .font(.system(size: 17, weight: .bold))
+                    .scaledFont(size: 17, weight: .bold)
                     .tracking(-0.2)
                     .foregroundStyle(Brand.textPrimary)
                     .lineLimit(1)
@@ -226,11 +247,12 @@ struct EventDetailView: View {
                 }
 
                 // Generate / share the event's guest QR code. Opens the
-                // event-specific Share Event screen (no event re-selection).
+                // event-specific Share Event screen (no event re-selection);
+                // the row is named after the screen it opens.
                 Button {
                     showingQRCode = true
                 } label: {
-                    moreRow(icon: "qrcode", title: "Guest QR Code",
+                    moreRow(icon: "qrcode", title: "Share Event",
                             trailing: "chevron.right")
                 }
                 .buttonStyle(.plain)
@@ -295,21 +317,21 @@ struct EventDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Image(systemName: "ticket")
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(size: 16, weight: .semibold)
                     .foregroundStyle(Brand.accent)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Event Pass")
-                        .font(.system(size: 12, weight: .semibold))
+                        .scaledFont(size: 12, weight: .semibold)
                         .foregroundStyle(Brand.textSecondary)
                     Text(pass.tierDisplayName)
-                        .font(.system(size: 16, weight: .semibold))
+                        .scaledFont(size: 16, weight: .semibold)
                         .foregroundStyle(Brand.textPrimary)
                 }
                 Spacer(minLength: 0)
                 if !pass.isActive {
                     Text("Refunded")
-                        .font(.system(size: 11, weight: .bold))
+                        .scaledFont(size: 11, weight: .bold)
                         .lineLimit(1)
                         .fixedSize()
                         .foregroundStyle(Brand.danger)
@@ -320,11 +342,11 @@ struct EventDetailView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Up to \(pass.guestCap.formatted()) guests")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
                 if pass.aiImportCap > 0 {
                     Text("AI imports used: \(pass.aiImportsUsed) of \(pass.aiImportCap)")
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textSecondary)
                 }
             }
@@ -356,15 +378,15 @@ struct EventDetailView: View {
     private func infoRow(icon: String, title: String, value: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(size: 16, weight: .semibold)
                 .foregroundStyle(Brand.accent)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(size: 12, weight: .semibold)
                     .foregroundStyle(Brand.textSecondary)
                 Text(value)
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(size: 16, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
             }
             Spacer(minLength: 0)
@@ -378,16 +400,16 @@ struct EventDetailView: View {
                          showsProgress: Bool = false, badge: String? = nil) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(size: 16, weight: .semibold)
                 .foregroundStyle(Brand.accent)
                 .frame(width: 28)
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(size: 16, weight: .semibold)
                 .foregroundStyle(Brand.textPrimary)
             Spacer(minLength: 0)
             if let badge {
                 Text(badge)
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(size: 13, weight: .bold)
                     .lineLimit(1)
                     .fixedSize()
                     .foregroundStyle(Brand.accent)
@@ -398,8 +420,9 @@ struct EventDetailView: View {
                 ProgressView()
             } else if let trailing {
                 Image(systemName: trailing)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Brand.slate400)
+                    .scaledFont(size: 14, weight: .semibold)
+                    .foregroundStyle(Brand.textSecondary)
+                    .accessibilityHidden(true)
             }
         }
         .padding(14)

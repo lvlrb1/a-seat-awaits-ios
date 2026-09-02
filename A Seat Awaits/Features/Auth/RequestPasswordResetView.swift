@@ -20,16 +20,16 @@ struct RequestPasswordResetView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if model.resetSent {
                     Image(systemName: "envelope.badge.fill")
-                        .font(.system(size: 36, weight: .semibold))
+                        .scaledFont(size: 36, weight: .semibold)
                         .foregroundStyle(Brand.accent)
                         .padding(.bottom, 20)
                     Text("Check your inbox")
-                        .font(.system(size: 24, weight: .bold))
+                        .scaledFont(size: 24, weight: .bold)
                         .tracking(-0.4)
                         .foregroundStyle(Brand.textPrimary)
                     // Generic copy — no account-existence signal.
                     Text("If an account exists for that email, we sent password-reset instructions. It can take a minute to arrive, so check spam if you don't see it.")
-                        .font(.system(size: 15))
+                        .scaledFont(size: 15)
                         .lineSpacing(3)
                         .foregroundStyle(Brand.textSecondary)
                         .padding(.top, 10)
@@ -39,11 +39,11 @@ struct RequestPasswordResetView: View {
                         .padding(.top, 28)
                 } else {
                     Text("Reset your password")
-                        .font(.system(size: 24, weight: .bold))
+                        .scaledFont(size: 24, weight: .bold)
                         .tracking(-0.4)
                         .foregroundStyle(Brand.textPrimary)
                     Text("Enter the email for your account and we'll send a link to set a new password.")
-                        .font(.system(size: 15))
+                        .scaledFont(size: 15)
                         .lineSpacing(3)
                         .foregroundStyle(Brand.textSecondary)
                         .padding(.top, 10)
@@ -65,7 +65,7 @@ struct RequestPasswordResetView: View {
 
                     if let err = model.resetError {
                         Label(err, systemImage: "exclamationmark.circle.fill")
-                            .font(.system(size: 13, weight: .medium))
+                            .scaledFont(size: 13, weight: .medium)
                             .foregroundStyle(Brand.danger)
                             .padding(.top, 10)
                     }

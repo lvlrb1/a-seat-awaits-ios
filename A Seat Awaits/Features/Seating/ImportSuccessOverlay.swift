@@ -27,10 +27,10 @@ struct ImportSuccessOverlay: View {
 
                 VStack(spacing: 6) {
                     Text("\(count) \(count == 1 ? "guest" : "guests") added")
-                        .font(.system(size: 20, weight: .bold))
+                        .scaledFont(size: 20, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                     Text("They're on your guest list.")
-                        .font(.system(size: 14, weight: .medium))
+                        .scaledFont(size: 14, weight: .medium)
                         .foregroundStyle(Brand.textSecondary)
                 }
             }
@@ -44,8 +44,14 @@ struct ImportSuccessOverlay: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(count) \(count == 1 ? "guest" : "guests") added to your guest list")
         .onAppear {
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.7)) { pop = true }
-            withAnimation(.easeOut(duration: 0.75)) { burst = true }
+            if reduceMotion {
+                // Static badge: no spring, no burst, just a gentle fade-in.
+                withAnimation(.easeOut(duration: 0.2)) { pop = true }
+                burst = true
+            } else {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.7)) { pop = true }
+                withAnimation(.easeOut(duration: 0.75)) { burst = true }
+            }
         }
     }
 
@@ -70,7 +76,7 @@ struct ImportSuccessOverlay: View {
                 .shadow(color: Brand.success.opacity(0.35), radius: 12, x: 0, y: 8)
 
             Image(systemName: "checkmark")
-                .font(.system(size: 38, weight: .heavy))
+                .scaledFont(size: 38, weight: .heavy)
                 .foregroundStyle(Brand.successText)
                 .scaleEffect(reduceMotion ? 1 : (pop ? 1 : 0.2))
         }
@@ -82,7 +88,7 @@ struct ImportSuccessOverlay: View {
         let radius: CGFloat = reduceMotion ? 0 : (burst ? 64 : 12)
         let palette = [Brand.purple, Brand.lilac, Brand.success]
         return Image(systemName: "sparkle")
-            .font(.system(size: 13, weight: .bold))
+            .scaledFont(size: 13, weight: .bold)
             .foregroundStyle(palette[i % palette.count])
             .offset(x: cos(angle) * radius, y: sin(angle) * radius)
             .scaleEffect(reduceMotion ? 0 : (burst ? 0.4 : 1))

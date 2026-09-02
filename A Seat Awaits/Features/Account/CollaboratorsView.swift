@@ -42,7 +42,9 @@ struct CollaboratorsView: View {
                 } else if store.isLoading {
                     ProgressView("Loading collaborators…")
                         .frame(maxWidth: .infinity, minHeight: 240)
-                } else if store.errorMessage != nil {
+                } else {
+                    // Terminal fallback: a nil overview with no error (e.g. a
+                    // cancelled load) must never leave the screen blank.
                     retryState
                 }
             }
@@ -61,7 +63,7 @@ struct CollaboratorsView: View {
                     Button { startInvite() } label: {
                         Image(systemName: "person.crop.circle.badge.plus")
                     }
-                    .accessibilityLabel("Invite collaborator")
+                    .accessibilityLabel("Invite Collaborator")
                 }
             }
         }
@@ -155,8 +157,9 @@ struct CollaboratorsView: View {
     private func byEventSection(_ overview: CollaboratorsOverview) -> some View {
         if overview.events.isEmpty {
             emptyState(
+                icon: "calendar.badge.plus",
                 title: "No events yet",
-                message: "Create an event first, then invite people to collaborate on it.")
+                message: "Create an event from the Events tab to invite collaborators.")
         } else if overview.isEmpty {
             VStack(spacing: 16) {
                 emptyState(
@@ -164,7 +167,7 @@ struct CollaboratorsView: View {
                     message: "Invite people to collaborate on your events to manage them here.")
                 if canInvite {
                     Button { startInvite() } label: {
-                        Label("Invite collaborator", systemImage: "person.crop.circle.badge.plus")
+                        Label("Invite Collaborator", systemImage: "person.crop.circle.badge.plus")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.primaryBrand)
@@ -174,7 +177,7 @@ struct CollaboratorsView: View {
         } else {
             HStack {
                 Text("Collaborators by Event")
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(size: 13, weight: .bold)
                     .foregroundStyle(Brand.textSecondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
@@ -210,16 +213,17 @@ struct CollaboratorsView: View {
 
     // MARK: - States
 
-    private func emptyState(title: String, message: String) -> some View {
+    private func emptyState(icon: String = "person.2.slash", title: String, message: String) -> some View {
         VStack(spacing: 10) {
-            Image(systemName: "person.2.slash")
-                .font(.system(size: 34, weight: .regular))
-                .foregroundStyle(Brand.slate300)
+            Image(systemName: icon)
+                .scaledFont(size: 34, weight: .regular)
+                .foregroundStyle(Brand.textSecondary)
+                .accessibilityHidden(true)
             Text(title)
-                .font(.system(size: 17, weight: .bold))
+                .scaledFont(size: 17, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text(message)
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
         }
@@ -231,10 +235,11 @@ struct CollaboratorsView: View {
     private var retryState: some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 32))
+                .scaledFont(size: 32)
                 .foregroundStyle(Brand.warning)
+                .accessibilityHidden(true)
             Text(store.errorMessage ?? "Couldn't load collaborators.")
-                .font(.system(size: 15))
+                .scaledFont(size: 15)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
             Button("Try Again") { Task { await store.load() } }
@@ -328,22 +333,23 @@ private struct InviteEventPicker: View {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(event.eventName)
-                                .font(.system(size: 16, weight: .semibold))
+                                .scaledFont(size: 16, weight: .semibold)
                                 .foregroundStyle(Brand.textPrimary)
                             Text("\(event.currentCount)/\(event.maxCount) collaborators")
-                                .font(.system(size: 13))
+                                .scaledFont(size: 13)
                                 .foregroundStyle(event.isAtLimit ? Brand.warningText : Brand.textSecondary)
                         }
                         Spacer(minLength: 8)
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Brand.slate300)
+                            .scaledFont(size: 13, weight: .bold)
+                            .foregroundStyle(Brand.textSecondary)
+                            .accessibilityHidden(true)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
-            .navigationTitle("Choose an event")
+            .navigationTitle("Choose an Event")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -366,10 +372,10 @@ private struct CollaboratorLimitsCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 Image(systemName: "person.2.badge.gearshape")
-                    .font(.system(size: 18, weight: .semibold))
+                    .scaledFont(size: 18, weight: .semibold)
                     .foregroundStyle(Brand.accent)
                 Text("Collaborator Limits")
-                    .font(.system(size: 17, weight: .bold))
+                    .scaledFont(size: 17, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                 Spacer()
             }
@@ -383,22 +389,23 @@ private struct CollaboratorLimitsCard: View {
 
             HStack(spacing: 8) {
                 Image(systemName: policy.isCollaborationEnabled ? "checkmark.seal.fill" : "lock.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(policy.isCollaborationEnabled ? Brand.success : Brand.slate400)
+                    .scaledFont(size: 14, weight: .semibold)
+                    .foregroundStyle(policy.isCollaborationEnabled ? Brand.success : Brand.textSecondary)
+                    .accessibilityHidden(true)
                 Text(policy.availabilityMessage)
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
                 Spacer(minLength: 4)
             }
 
             HStack {
                 Label("\(policy.planDisplayName) plan", systemImage: "flag.checkered")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
                 Spacer()
                 Button(action: onUpgrade) {
-                    Text(policy.isTopTier ? "Manage Plan" : "Upgrade Plan")
-                        .font(.system(size: 13, weight: .bold))
+                    Text(policy.isTopTier ? "Manage Plan" : "View Plans")
+                        .scaledFont(size: 13, weight: .bold)
                         .foregroundStyle(Brand.accent)
                 }
                 .buttonStyle(.plain)
@@ -413,10 +420,10 @@ private struct CollaboratorLimitsCard: View {
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 3) {
             Text(value)
-                .font(.system(size: 20, weight: .bold))
+                .scaledFont(size: 20, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(size: 11, weight: .medium)
                 .foregroundStyle(Brand.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -447,7 +454,7 @@ private struct EventCollaboratorCard: View {
                 Divider().overlay(Brand.hairline)
                 if event.collaborators.isEmpty {
                     Text("No collaborators for this event.")
-                        .font(.system(size: 14))
+                        .scaledFont(size: 14)
                         .foregroundStyle(Brand.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
@@ -476,16 +483,17 @@ private struct EventCollaboratorCard: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(event.eventName)
-                        .font(.system(size: 16, weight: .bold))
+                        .scaledFont(size: 16, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                         .multilineTextAlignment(.leading)
                     usageBadge
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Brand.slate300)
+                    .scaledFont(size: 14, weight: .bold)
+                    .foregroundStyle(Brand.textSecondary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .accessibilityHidden(true)
             }
             .padding(16)
             .contentShape(Rectangle())
@@ -501,11 +509,11 @@ private struct EventCollaboratorCard: View {
                 .fill(usageColor)
                 .frame(width: 7, height: 7)
             Text("\(event.currentCount)/\(event.maxCount)")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(usageColor)
             if event.usageLevel == .limitReached {
                 Text("Limit reached")
-                    .font(.system(size: 11, weight: .semibold))
+                    .scaledFont(size: 11, weight: .semibold)
                     .foregroundStyle(Brand.warningText)
             }
         }
@@ -543,12 +551,12 @@ private struct CollaboratorRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(collaborator.displayName)
-                    .font(.system(size: 15, weight: .semibold))
+                    .scaledFont(size: 15, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
                     .lineLimit(1)
                 if !collaborator.email.isEmpty {
                     Text(collaborator.email)
-                        .font(.system(size: 12))
+                        .scaledFont(size: 12)
                         .foregroundStyle(Brand.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -577,7 +585,7 @@ private struct CollaboratorRow: View {
             TagPill.assigned("Active")
         } else {
             Text("Will be \(collaborator.role.label)")
-                .font(.system(size: 11, weight: .semibold))
+                .scaledFont(size: 11, weight: .semibold)
                 .lineLimit(1)
                 .fixedSize()
                 .foregroundStyle(Brand.warningText)
@@ -608,15 +616,17 @@ private struct CollaboratorRow: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 20))
-                        .foregroundStyle(Brand.slate400)
+                        .scaledFont(size: 20)
+                        .foregroundStyle(Brand.textSecondary)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("More actions for \(collaborator.displayName)")
             }
         } else {
             Button(role: .destructive, action: onRevoke) {
                 Text("Revoke")
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(size: 13, weight: .bold)
                     .foregroundStyle(Brand.danger)
             }
             .buttonStyle(.plain)
@@ -663,7 +673,7 @@ private struct RoleToggle: View {
             if !selected { onSelect(option) }
         } label: {
             Text(option.label)
-                .font(.system(size: 12, weight: selected ? .bold : .semibold))
+                .scaledFont(size: 12, weight: selected ? .bold : .semibold)
                 .foregroundStyle(selected ? Brand.textPrimary : Brand.textSecondary)
                 .frame(width: 52, height: 26)
                 .background {

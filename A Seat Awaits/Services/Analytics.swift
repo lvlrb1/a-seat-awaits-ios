@@ -31,7 +31,7 @@ enum Analytics {
         // analytics from test runs. Without setup, later identify/capture
         // calls are no-ops.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
-        let config = PostHogConfig(apiKey: apiKey, host: host)
+        let config = PostHogConfig(projectToken: apiKey, host: host)
         // "Application Opened" / "Application Backgrounded" etc. for free.
         config.captureApplicationLifecycleEvents = true
         PostHogSDK.shared.setup(config)

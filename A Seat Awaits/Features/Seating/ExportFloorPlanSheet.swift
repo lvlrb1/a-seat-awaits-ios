@@ -7,6 +7,7 @@
 //  bytes to a temp file, and hands them to the native share sheet.
 //
 
+import StoreKit
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -20,6 +21,7 @@ struct ExportFloorPlanSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
+    @Environment(\.requestReview) private var requestReview
 
     private var event: Event { store.event }
     /// Strict gate: Free until the entitlement resolves. The local renderer has
@@ -93,8 +95,12 @@ struct ExportFloorPlanSheet: View {
         }
         #if canImport(UIKit)
         .sheet(item: $exported) { doc in
-            ShareSheet(items: [FloorPlanActivityItem(url: doc.url, title: "\(event.name) Floor Plan")]) {
+            ShareSheet(items: [FloorPlanActivityItem(url: doc.url, title: "\(event.name) Floor Plan")]) { completed in
                 dismiss()
+                // A shared/saved export is a moment of delight: the only place
+                // in this flow the rating prompt may be requested (once per app
+                // version). A cancelled share sheet never prompts.
+                if completed { ReviewPromptGate.requestIfEligible(requestReview) }
             }
         }
         #endif
@@ -109,17 +115,18 @@ struct ExportFloorPlanSheet: View {
             ZStack {
                 Circle().fill(Brand.accent.opacity(0.12))
                 Image(systemName: "sparkles")
-                    .font(.system(size: 24, weight: .semibold))
+                    .scaledFont(size: 24, weight: .semibold)
                     .foregroundStyle(Brand.accent)
             }
             .frame(width: 56, height: 56)
+            .accessibilityHidden(true)
 
             Text("Available on paid plans")
-                .font(.system(size: 17, weight: .bold))
+                .scaledFont(size: 17, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
 
-            Text("Export and print a beautifully branded floor plan PDF with any Event Pass, or the Pro plan.")
-                .font(.system(size: 14))
+            Text("Export and print a beautifully branded floor plan PDF. Included with any Event Pass, or with Pro.")
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -127,7 +134,7 @@ struct ExportFloorPlanSheet: View {
             Button {
                 showingPaywall = true
             } label: {
-                Label("View plans", systemImage: "sparkles")
+                Label("View Plans", systemImage: "sparkles")
             }
             .buttonStyle(.primaryBrand)
             .padding(.top, 4)
@@ -144,17 +151,17 @@ struct ExportFloorPlanSheet: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Brand.accent.opacity(0.12))
                 Image(systemName: "printer.fill")
-                    .font(.system(size: 20, weight: .semibold))
+                    .scaledFont(size: 20, weight: .semibold)
                     .foregroundStyle(Brand.accent)
             }
             .frame(width: 46, height: 46)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("A polished, shareable PDF")
-                    .font(.system(size: 16, weight: .bold))
+                    .scaledFont(size: 16, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                 Text("Your floor plan is drawn as a clean vector seating chart: tables, chairs, rooms, and decor, fit to the page and ready to print or share.")
-                    .font(.system(size: 14))
+                    .scaledFont(size: 14)
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -187,7 +194,7 @@ struct ExportFloorPlanSheet: View {
             VStack(spacing: 10) {
                 ProgressView().tint(Brand.accent)
                 Text("Loading preview…")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
             }
             .frame(maxWidth: .infinity, minHeight: 160)
@@ -200,14 +207,14 @@ struct ExportFloorPlanSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle(isOn: $includeGuestList) {
                 Text("Include guest list pages")
-                    .font(.system(size: 15, weight: .semibold))
+                    .scaledFont(size: 15, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
             }
             .tint(Brand.accent)
             .disabled(isExporting)
 
             Text("Append printable pages listing each table with its guests, sorted by last name.")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -218,7 +225,7 @@ struct ExportFloorPlanSheet: View {
 
     private func errorNotice(_ message: String) -> some View {
         Label {
-            Text(message).font(.system(size: 14, weight: .medium))
+            Text(message).scaledFont(size: 14, weight: .medium)
         } icon: {
             Image(systemName: "exclamationmark.triangle.fill")
         }
@@ -311,8 +318,13 @@ struct ExportFloorPlanSheet: View {
             let url = try FloorPlanExportFile.write(data, eventName: event.name)
             exported = ExportedDocument(url: url)
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription
-                ?? "Couldn't generate the floor-plan PDF. Please try again."
+            // The file write is local, so a network-flavoured line would be
+            // wrong; `FriendlyError` still owns the wording for anything it
+            // recognises (offline, cancellation), and the rest gets one calm
+            // export-specific fallback rather than a raw description.
+            errorMessage = FriendlyError.isOffline(error) || FriendlyError.isCancellation(error)
+                ? FriendlyError.message(for: error)
+                : "Couldn't generate the floor-plan PDF. Please try again."
         }
     }
 }

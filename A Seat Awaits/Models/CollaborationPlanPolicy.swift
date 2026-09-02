@@ -131,6 +131,6 @@ nonisolated struct CollaborationPlanPolicy: Equatable, Sendable {
     var availabilityMessage: String {
         isCollaborationEnabled
             ? "Collaboration is enabled on your plan."
-            : "Collaboration is included with a Premium Pass or the Pro subscription."
+            : "Collaboration is included with a Premium Event Pass, or with Pro."
     }
 }

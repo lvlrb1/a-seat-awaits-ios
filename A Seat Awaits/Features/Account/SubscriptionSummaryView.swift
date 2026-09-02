@@ -121,20 +121,20 @@ struct SubscriptionSummaryView: View {
             VStack(alignment: .leading, spacing: 4) {
                 TitleBadgeRow(badgeAtTrailing: true) {
                     Text("\(policy.planDisplayName) plan")
-                        .font(.system(size: 22, weight: .bold))
+                        .scaledFont(size: 22, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                 } badge: {
                     StatusBadge(status: policy.status)
                 }
                 Text(policy.nominalTier.tagline)
-                    .font(.system(size: 14))
+                    .scaledFont(size: 14)
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             if subscription?.isCanceling == true {
                 Label("Cancels at the end of the current period", systemImage: "calendar.badge.exclamationmark")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.warningText)
             }
         }
@@ -153,13 +153,13 @@ struct SubscriptionSummaryView: View {
         VStack(alignment: .leading, spacing: 8) {
             TitleBadgeRow(badgeAtTrailing: true) {
                 Text("\(policy.planDisplayName) plan")
-                    .font(.system(size: 22, weight: .bold))
+                    .scaledFont(size: 22, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
             } badge: {
                 StatusBadge(status: policy.status)
             }
             Text(endedSummaryText)
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -187,13 +187,13 @@ struct SubscriptionSummaryView: View {
         VStack(alignment: .leading, spacing: 10) {
             TitleBadgeRow(badgeAtTrailing: true) {
                 Text("Free plan")
-                    .font(.system(size: 22, weight: .bold))
+                    .scaledFont(size: 22, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
             } badge: {
                 pill("EARLY MEMBER")
             }
             Text("As a thank-you for being an early member, your Free plan is yours to keep at no cost: 1 event with up to 25 guests.")
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -210,15 +210,15 @@ struct SubscriptionSummaryView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 Text("Pay as you go")
-                    .font(.system(size: 22, weight: .bold))
+                    .scaledFont(size: 22, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                 Spacer()
             }
             Text("No subscription needed. Buy a one-time Event Pass for each event you plan, or go Pro if you plan events for a living.")
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("View Passes & Pro") { isPresentingPaywall = true }
+            Button("View Plans") { isPresentingPaywall = true }
                 .buttonStyle(.secondaryOutline)
         }
         .padding(18)
@@ -248,11 +248,11 @@ struct SubscriptionSummaryView: View {
                     if index > 0 { AccountRowDivider(inset: 16) }
                     HStack {
                         Text(row.label)
-                            .font(.system(size: 15))
+                            .scaledFont(size: 15)
                             .foregroundStyle(Brand.textSecondary)
                         Spacer()
                         Text(row.value)
-                            .font(.system(size: 15, weight: .semibold))
+                            .scaledFont(size: 15, weight: .semibold)
                             .foregroundStyle(Brand.textPrimary)
                     }
                     .padding(.horizontal, 16)
@@ -290,7 +290,7 @@ struct SubscriptionSummaryView: View {
         if let passes = snapshot?.passes, !passes.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Your passes")
-                    .font(.system(size: 16, weight: .bold))
+                    .scaledFont(size: 16, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
 
                 VStack(alignment: .leading, spacing: 0) {
@@ -303,8 +303,8 @@ struct SubscriptionSummaryView: View {
                 }
 
                 Text("A pass never expires. It covers one event for good.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Brand.slate400)
+                    .scaledFont(size: 12)
+                    .foregroundStyle(Brand.textSecondary)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -315,21 +315,21 @@ struct SubscriptionSummaryView: View {
     private func passRow(_ pass: EventPass) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "ticket")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(size: 15, weight: .semibold)
                 .foregroundStyle(pass.isActive ? Brand.accent : Brand.slate300)
                 .frame(width: 20)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 Text(pass.tierDisplayName)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(size: 14, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
                 Text(passStatusLine(pass))
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(passDetailLine(pass))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Brand.slate400)
+                    .scaledFont(size: 12)
+                    .foregroundStyle(Brand.textSecondary)
             }
             Spacer(minLength: 8)
             passBadge(pass)
@@ -375,7 +375,7 @@ struct SubscriptionSummaryView: View {
                       fg: Color = Brand.textSecondary,
                       bg: Color = Brand.control) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .heavy))
+            .scaledFont(size: 11, weight: .heavy)
             .tracking(0.5)
             .lineLimit(1)
             .fixedSize()
@@ -391,7 +391,7 @@ struct SubscriptionSummaryView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Your plan includes")
-                    .font(.system(size: 16, weight: .bold))
+                    .scaledFont(size: 16, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
                 Spacer()
             }
@@ -400,27 +400,30 @@ struct SubscriptionSummaryView: View {
                 ForEach(policy.nominalFeatures) { feature in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: feature.included ? "checkmark.circle.fill" : "minus.circle")
-                            .font(.system(size: 16, weight: .semibold))
+                            .scaledFont(size: 16, weight: .semibold)
                             .foregroundStyle(feature.included ? Brand.success : Brand.slate300)
                             .frame(width: 18)
+                            .accessibilityHidden(true)
                         Text(feature.label)
-                            .font(.system(size: 14))
+                            .scaledFont(size: 14)
                             .foregroundStyle(feature.included ? Brand.textPrimary : Brand.textSecondary)
                         Spacer(minLength: 0)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(feature.label), \(feature.included ? "included" : "not included")")
                 }
             }
 
             if presentation == .paid || presentation == .legacyFree,
                !(snapshot?.activePasses.isEmpty ?? true) {
                 Text("Events covered by an Event Pass get that pass's limits on top of your plan.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Brand.slate400)
+                    .scaledFont(size: 12)
+                    .foregroundStyle(Brand.textSecondary)
             }
 
             if policy.isAccessReducedByStatus {
                 Text("Free limits apply until your subscription is active again.")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.warningText)
             }
         }
@@ -436,7 +439,7 @@ struct SubscriptionSummaryView: View {
     private var howPassesWorkCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("How it works")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
 
             VStack(alignment: .leading, spacing: 12) {
@@ -456,12 +459,12 @@ struct SubscriptionSummaryView: View {
     private func howItWorksRow(icon: String, text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(size: 15, weight: .semibold)
                 .foregroundStyle(Brand.accent)
                 .frame(width: 20)
                 .padding(.top, 1)
             Text(text)
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -491,14 +494,14 @@ struct SubscriptionSummaryView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "globe")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Brand.slate400)
+                        .scaledFont(size: 15, weight: .semibold)
+                        .foregroundStyle(Brand.textSecondary)
                     Text("Billed through our website")
-                        .font(.system(size: 15, weight: .bold))
+                        .scaledFont(size: 15, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                 }
                 Text("Your subscription is managed where you subscribed. Plan and billing changes made there are reflected here automatically.")
-                    .font(.system(size: 13))
+                    .scaledFont(size: 13)
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -515,15 +518,15 @@ struct SubscriptionSummaryView: View {
     private var upgradeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(policy.isFree ? "Plan a bigger event" : "Compare options")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text(policy.isFree
                  ? "Want more guests, AI import, or collaboration? Pick up a one-time Event Pass, or go Pro if you plan events for a living."
                  : "Buy a one-time Event Pass, or go Pro if you plan events for a living.")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("View Passes & Pro") { isPresentingPaywall = true }
+            Button("View Plans") { isPresentingPaywall = true }
                 .buttonStyle(.secondaryOutline)
         }
         .padding(16)
@@ -536,15 +539,15 @@ struct SubscriptionSummaryView: View {
         switch provider {
         case .apple:
             Text("Billing is securely managed by Apple. Changes you make in your App Store settings are reflected here automatically.")
-                .font(.system(size: 12))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 12)
+                .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
         case .stripe:
             Text("Billing changes are reflected here automatically.")
-                .font(.system(size: 12))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 12)
+                .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
                 .padding(.top, 4)

@@ -37,6 +37,16 @@ struct RootView: View {
                 }
             }
         }
+        // Root-level notices: expired deep links, a forced sign-out after the
+        // session died, an accepted invitation. Rendered here so they show
+        // over whichever screen is up, signed in or out.
+        .alert(appState.notice?.title ?? "",
+               isPresented: Binding(get: { appState.notice != nil },
+                                    set: { if !$0 { appState.notice = nil } })) {
+            Button("OK", role: .cancel) { appState.notice = nil }
+        } message: {
+            Text(appState.notice?.message ?? "")
+        }
     }
 }
 

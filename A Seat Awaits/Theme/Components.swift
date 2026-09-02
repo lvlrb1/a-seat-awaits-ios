@@ -31,14 +31,15 @@ struct InitialsAvatar: View {
     /// Optional explicit seed (else the name is used) so partners can share a hue.
     var seed: String? = nil
 
-    /// Pastel bg / saturated fg pairs from the design spec.
-    static let palette: [(bg: String, fg: String)] = [
-        ("#FCE7F3", "#BE185D"),
-        ("#E0F2FE", "#0369A1"),
-        ("#DCFCE7", "#15803D"),
-        ("#FEF3C7", "#B45309"),
-        ("#FAE8FF", "#A21CAF"),
-        ("#F3E8FF", "#7C3AED"),
+    /// Pastel bg / saturated fg pairs from the design spec (every pair is at
+    /// least 6:1, WCAG AA for the small bold initials).
+    nonisolated static let palette: [(bg: String, fg: String)] = [
+        ("#FCE7F3", "#9D174D"),
+        ("#E0F2FE", "#075985"),
+        ("#DCFCE7", "#166534"),
+        ("#FEF3C7", "#92400E"),
+        ("#FAE8FF", "#86198F"),
+        ("#F3E8FF", "#6D28D9"),
     ]
 
     private var pair: (bg: Color, fg: Color) {
@@ -56,9 +57,11 @@ struct InitialsAvatar: View {
             .frame(width: size, height: size)
             .overlay(
                 Text(Initials.from(name))
-                    .font(.system(size: size * 0.36, weight: .bold))
+                    .scaledFont(size: size * 0.36, weight: .bold)
                     .foregroundStyle(pair.fg)
             )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(name)
     }
 }
 
@@ -73,9 +76,11 @@ struct GlassAvatar: View {
             .overlay(Circle().strokeBorder(.white.opacity(0.3), lineWidth: 1))
             .overlay(
                 Text(Initials.from(name))
-                    .font(.system(size: size * 0.37, weight: .bold))
+                    .scaledFont(size: size * 0.37, weight: .bold)
                     .foregroundStyle(.white)
             )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(name)
     }
 }
 
@@ -87,7 +92,11 @@ struct ProgressRing: View {
     var size: CGFloat = 60
     var lineWidth: CGFloat = 7
     var showsPercent: Bool = true
+    /// VoiceOver label; the value is announced as a percentage.
+    var accessibilityLabel: String = "Progress"
     @Environment(\.colorScheme) private var scheme
+
+    private var percent: Int { Int((max(0, min(1, progress)) * 100).rounded()) }
 
     var body: some View {
         ZStack {
@@ -98,12 +107,15 @@ struct ProgressRing: View {
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             if showsPercent {
-                Text("\(Int((progress * 100).rounded()))%")
-                    .font(.system(size: size * 0.25, weight: .bold))
+                Text("\(percent)%")
+                    .scaledFont(size: size * 0.25, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
             }
         }
         .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue("\(percent) percent")
     }
 }
 
@@ -111,6 +123,8 @@ struct ProgressRing: View {
 struct ProgressBar: View {
     var progress: Double
     var height: CGFloat = 8
+    /// VoiceOver label; the value is announced as a percentage.
+    var accessibilityLabel: String = "Progress"
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
@@ -122,6 +136,9 @@ struct ProgressBar: View {
             }
         }
         .frame(height: height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue("\(Int((max(0, min(1, progress)) * 100).rounded())) percent")
     }
 }
 
@@ -139,11 +156,13 @@ struct TagPill: View {
         HStack(spacing: 5) {
             if let dotColor {
                 Circle().fill(dotColor).frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
             }
             if let icon {
-                Image(systemName: icon).font(.system(size: 11, weight: .bold))
+                Image(systemName: icon).scaledFont(size: 11, weight: .bold)
+                    .accessibilityHidden(true)
             }
-            Text(text).font(.system(size: 12, weight: .bold)).lineLimit(1)
+            Text(text).scaledFont(size: 12, weight: .bold).lineLimit(1)
         }
         .foregroundStyle(fg)
         .padding(.horizontal, 10)
@@ -202,7 +221,7 @@ struct FilterChip: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: 13, weight: .bold))
+            .scaledFont(size: 13, weight: .bold)
             .lineLimit(1)
             .foregroundStyle(selected ? selectedFg : Brand.slate600)
             .padding(.horizontal, 13)
@@ -223,21 +242,24 @@ struct SearchField: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(onPlum ? Color.white.opacity(0.7) : Brand.slate400)
+                .scaledFont(size: 16, weight: .semibold)
+                .foregroundStyle(onPlum ? Color.white.opacity(0.7) : Brand.textSecondary)
+                .accessibilityHidden(true)
             ZStack(alignment: .leading) {
                 if text.isEmpty {
                     Text(placeholder)
-                        .foregroundStyle(onPlum ? Color.white.opacity(0.6) : Brand.slate400)
+                        .foregroundStyle(onPlum ? Color.white.opacity(0.6) : Brand.textSecondary)
+                        .accessibilityHidden(true)
                 }
-                TextField("", text: $text)
+                TextField(placeholder, text: $text, prompt: Text(""))
                     .foregroundStyle(onPlum ? .white : Brand.textPrimary)
                     .tint(onPlum ? .white : Brand.plum)
+                    .accessibilityLabel(placeholder)
             }
-            .font(.system(size: 15))
+            .scaledFont(size: 15)
         }
         .padding(.horizontal, 14)
-        .frame(height: height)
+        .frame(minHeight: height)
         .background(
             onPlum ? AnyShapeStyle(Color.white.opacity(0.16)) : AnyShapeStyle(Brand.control),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -262,13 +284,13 @@ struct LabeledField<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.slate600)
             content()
-                .font(.system(size: 16))
+                .scaledFont(size: 16)
                 .foregroundStyle(Brand.textPrimary)
                 .tint(Brand.plum)
-                .frame(height: 54)
+                .frame(minHeight: 54)
                 .padding(.horizontal, 16)
                 .background(Brand.fieldFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
@@ -310,17 +332,24 @@ struct BrandSegmentedControl: View {
                 HStack(spacing: 0) {
                     ForEach(Array(titles.enumerated()), id: \.offset) { idx, title in
                         Text(title)
-                            .font(.system(size: 14, weight: selection == idx ? .bold : .semibold))
+                            .scaledFont(size: 14, weight: selection == idx ? .bold : .semibold)
                             .foregroundStyle(selection == idx ? Brand.textPrimary : Brand.textSecondary)
-                            .frame(width: segW, height: 38)
+                            .frame(width: segW)
+                            .frame(minHeight: 38)
+                            .frame(maxHeight: .infinity)
                             .contentShape(Rectangle())
                             .onTapGesture { selection = idx }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(title)
+                            .accessibilityAddTraits(selection == idx ? [.isButton, .isSelected] : .isButton)
+                            .accessibilityAction { selection = idx }
                     }
                 }
             }
         }
-        .frame(height: 38)
+        .frame(minHeight: 38)
         .background(Brand.control, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -335,12 +364,12 @@ struct FloatingButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: icon).font(.system(size: 17, weight: .heavy))
-                Text(title).font(.system(size: 16, weight: .bold))
+                Image(systemName: icon).scaledFont(size: 17, weight: .heavy)
+                Text(title).scaledFont(size: 16, weight: .bold)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 20)
-            .frame(height: 52)
+            .frame(minHeight: 52)
             .background(Brand.primaryFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .shadow(color: Brand.plum.opacity(scheme == .dark ? 0.4 : 0.6), radius: 15, x: 0, y: 12)
         }
@@ -361,17 +390,17 @@ struct SheetHeader: View {
     var body: some View {
         ZStack {
             Text(title)
-                .font(.system(size: 17, weight: .bold))
+                .scaledFont(size: 17, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             HStack {
                 Button(cancelTitle, action: onCancel)
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(size: 16, weight: .semibold)
                     .foregroundStyle(Brand.accent)
                 Spacer()
                 if let actionTitle, let onAction {
                     Button(actionTitle, action: onAction)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(actionEnabled ? Brand.accent : Brand.slate300)
+                        .scaledFont(size: 16, weight: .bold)
+                        .foregroundStyle(actionEnabled ? Brand.accent : Brand.textSecondary.opacity(0.8))
                         .disabled(!actionEnabled)
                 }
             }
@@ -394,8 +423,9 @@ struct LiveBadge: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(Brand.success).frame(width: 7, height: 7)
+                .accessibilityHidden(true)
             Text("LIVE · \(name.uppercased())")
-                .font(.system(size: 11, weight: .heavy))
+                .scaledFont(size: 11, weight: .heavy)
                 .tracking(0.6)
                 .lineLimit(1)
                 .foregroundStyle(Brand.successText)
@@ -415,9 +445,9 @@ struct ViewOnlyBadge: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "eye")
-                .font(.system(size: 11, weight: .heavy))
+                .scaledFont(size: 11, weight: .heavy)
             Text("VIEW ONLY")
-                .font(.system(size: 11, weight: .heavy))
+                .scaledFont(size: 11, weight: .heavy)
                 .tracking(0.6)
         }
         .foregroundStyle(Brand.textSecondary)
@@ -437,9 +467,9 @@ struct OfflineBanner: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "wifi.slash")
-                .font(.system(size: 13, weight: .bold))
+                .scaledFont(size: 13, weight: .bold)
             Text("You're offline. Changes will sync when you reconnect.")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }

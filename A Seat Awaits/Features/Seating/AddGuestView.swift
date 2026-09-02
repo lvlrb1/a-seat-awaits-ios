@@ -20,6 +20,15 @@ struct AddGuestView: View {
     @State private var errorMessage: String?
     @State private var showingPaywall = false
 
+    private enum Field: Hashable { case name, group, dietary, notes }
+    @FocusState private var focus: Field?
+
+    /// Anything typed or picked beyond the blank defaults.
+    private var isDirty: Bool {
+        !name.isEmpty || !customGroupName.isEmpty || !dietary.isEmpty || !notes.isEmpty
+            || selectedTableId != nil || selectedGroupId != nil
+    }
+
     /// Numeric-aware name order, same as the table pickers elsewhere.
     private var sortedTables: [SeatingTable] {
         SeatingLogic.sortedTables(store.tables, by: .nameAZ, guests: store.guests)
@@ -45,13 +54,13 @@ struct AddGuestView: View {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Guest limit reached", systemImage: "exclamationmark.triangle.fill")
-                                .font(.system(size: 14, weight: .semibold))
+                                .scaledFont(size: 14, weight: .semibold)
                                 .foregroundStyle(Brand.warning)
                             Text("This event has \(store.guests.count) of \(store.entitlement.guestCap) guests on \(store.entitlement.guestCapSourceLabel). Upgrade to add more.")
                                 .font(.footnote)
                                 .foregroundStyle(Brand.textSecondary)
                             Button("View plans") { showingPaywall = true }
-                                .font(.system(size: 14, weight: .semibold))
+                                .scaledFont(size: 14, weight: .semibold)
                                 .foregroundStyle(Brand.accent)
                         }
                     }
@@ -59,6 +68,9 @@ struct AddGuestView: View {
                 Section("Guest") {
                     TextField("Full name", text: $name)
                         .textContentType(.name)
+                        .focused($focus, equals: .name)
+                        .submitLabel(.next)
+                        .onSubmit { focus = .group }
                 }
                 if !store.tables.isEmpty {
                     Section("Seating") {
@@ -80,11 +92,20 @@ struct AddGuestView: View {
                         }
                     }
                     TextField("Or type a group name", text: $customGroupName)
+                        .focused($focus, equals: .group)
+                        .submitLabel(.next)
+                        .onSubmit { focus = .dietary }
                 }
                 Section {
                     TextField("Dietary preference", text: $dietary)
+                        .focused($focus, equals: .dietary)
+                        .submitLabel(.next)
+                        .onSubmit { focus = .notes }
                     TextField("Notes", text: $notes, axis: .vertical)
                         .lineLimit(2...4)
+                        .focused($focus, equals: .notes)
+                        .submitLabel(.done)
+                        .onSubmit { focus = nil }
                 } header: {
                     Text("Details")
                 } footer: {
@@ -104,11 +125,22 @@ struct AddGuestView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { Task { await save() } }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isSaving || atCapacity)
+                    Button { Task { await save() } } label: {
+                        HStack(spacing: 6) {
+                            if isSaving { ProgressView().controlSize(.small) }
+                            Text("Add")
+                        }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isSaving || atCapacity)
                 }
             }
-            .interactiveDismissDisabled(isSaving)
+            .interactiveDismissDisabled(isSaving || isDirty)
+            // Land the cursor in the name field once the sheet has settled, so
+            // adding a guest is type-and-go.
+            .task {
+                try? await Task.sleep(for: .milliseconds(350))
+                if focus == nil { focus = .name }
+            }
             .sheet(isPresented: $showingPaywall, onDismiss: {
                 Task { await store.loadEntitlement() }
             }) {

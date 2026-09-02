@@ -18,6 +18,7 @@
 //  Rows are written in one batched call via `store.addGuests(...)`.
 //
 
+import StoreKit
 import SwiftUI
 
 struct ReviewImportView: View {
@@ -28,6 +29,7 @@ struct ReviewImportView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
+    @Environment(\.requestReview) private var requestReview
 
     @State private var rows: [ReviewRow]
     @State private var editing: ReviewRow?
@@ -46,12 +48,14 @@ struct ReviewImportView: View {
     init(parsed: [ParsedGuest], store: SeatingStore, onFinish: @escaping () -> Void) {
         self.store = store
         self.onFinish = onFinish
-        // Flag rows whose normalized name already exists in this event (F6).
+        // Flag rows whose normalized name already exists in this event (F6), or
+        // that repeat an earlier row of the same paste (the first copy imports,
+        // later copies are flagged and default to skip).
         let existing = Set(store.guests.map { GuestImportParser.normalizedName($0.name) })
-        var built = parsed.map { guest -> ReviewRow in
-            let dupe = existing.contains(GuestImportParser.normalizedName(guest.name))
+        let flags = GuestImportParser.duplicateFlags(for: parsed.map(\.name), existing: existing)
+        var built = zip(parsed, flags).map { guest, dupe -> ReviewRow in
             // Duplicates default to skip; everything else imports.
-            return ReviewRow(guest: guest, isDuplicate: dupe, action: dupe ? .skip : .add)
+            ReviewRow(guest: guest, isDuplicate: dupe, action: dupe ? .skip : .add)
         }
         // Pre-select only what the event's remaining capacity can hold. The
         // overflow arrives skipped rather than erroring out halfway through, and
@@ -157,14 +161,14 @@ struct ReviewImportView: View {
                     dismiss()
                 } label: {
                     Label("Back", systemImage: "chevron.left")
-                        .font(.system(size: 16, weight: .semibold))
+                        .scaledFont(size: 16, weight: .semibold)
                 }
                 .tint(Brand.accent)
                 .disabled(isImporting)
             }
             ToolbarItem(placement: .principal) {
                 Text("Review import")
-                    .font(.system(size: 17, weight: .bold))
+                    .scaledFont(size: 17, weight: .bold)
                     .foregroundStyle(Brand.textPrimary)
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -234,10 +238,10 @@ struct ReviewImportView: View {
     private var summaryBanner: some View {
         HStack(spacing: 9) {
             Image(systemName: "checkmark.circle")
-                .font(.system(size: 18, weight: .bold))
+                .scaledFont(size: 18, weight: .bold)
                 .foregroundStyle(Brand.successText)
             Text(summaryText)
-                .font(.system(size: 13, weight: .bold))
+                .scaledFont(size: 13, weight: .bold)
                 .foregroundStyle(Brand.successText)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -274,7 +278,7 @@ struct ReviewImportView: View {
             Text(confirmCount > 0
                  ? "Highlighted rows are worth a quick review. Tap a row to edit it, or use the circle to leave someone out."
                  : "Tap a row to edit it, or use the circle to leave someone out.")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(size: 12, weight: .medium)
                 .foregroundStyle(Brand.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -314,9 +318,12 @@ struct ReviewImportView: View {
             }
         } label: {
             Image(systemName: "ellipsis.circle")
-                .font(.system(size: 17, weight: .semibold))
+                .scaledFont(size: 17, weight: .semibold)
                 .foregroundStyle(Brand.accent)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
+        .accessibilityLabel("Import actions")
         .disabled(isImporting)
     }
 
@@ -328,20 +335,22 @@ struct ReviewImportView: View {
             Label(overBy > 0 ? "More guests selected than your plan allows"
                              : "This list is larger than your plan allows",
                   systemImage: "person.2.slash")
-                .font(.system(size: 13, weight: .bold))
+                .scaledFont(size: 13, weight: .bold)
                 .foregroundStyle(Brand.warningText)
             Text(capacityText)
-                .font(.system(size: 12))
+                .scaledFont(size: 12)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 14) {
-                Button("View plans") { showingPaywall = true }
-                    .font(.system(size: 13, weight: .semibold))
+                Button("View Plans") { showingPaywall = true }
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.accent)
+                    .frame(minHeight: 44)
                 if overBy > 0 {
-                    Button("Select as many as fit") { selectUpToCapacity() }
-                        .font(.system(size: 13, weight: .semibold))
+                    Button("Select as Many as Fit") { selectUpToCapacity() }
+                        .scaledFont(size: 13, weight: .semibold)
                         .foregroundStyle(Brand.accent)
+                        .frame(minHeight: 44)
                 }
             }
         }
@@ -372,10 +381,10 @@ struct ReviewImportView: View {
     private var duplicateNotice: some View {
         HStack(spacing: 9) {
             Image(systemName: "person.fill.questionmark")
-                .font(.system(size: 15, weight: .bold))
+                .scaledFont(size: 15, weight: .bold)
                 .foregroundStyle(Brand.warningText)
             Text("\(duplicateCount) look like \(duplicateCount == 1 ? "a duplicate" : "duplicates") of guests you already have. They're set to skip. Tap a flagged row's circle to import it anyway.")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.warningText)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -394,10 +403,10 @@ struct ReviewImportView: View {
     private func stoppedNotice(_ landed: Int) -> some View {
         HStack(spacing: 9) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 15, weight: .bold))
+                .scaledFont(size: 15, weight: .bold)
                 .foregroundStyle(Brand.successText)
             Text("\(landed) \(landed == 1 ? "guest" : "guests") already imported and removed from this list. Adjust what's left, or tap Done to finish.")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(size: 13, weight: .semibold)
                 .foregroundStyle(Brand.successText)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -412,8 +421,8 @@ struct ReviewImportView: View {
     }
 
     private var noMatchesNotice: some View {
-        Text("No one in this import matches \"\(search)\".")
-            .font(.system(size: 13, weight: .medium))
+        Text("No one in this import matches “\(search)”.")
+            .scaledFont(size: 13, weight: .medium)
             .foregroundStyle(Brand.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 18)
@@ -424,7 +433,7 @@ struct ReviewImportView: View {
     private var confirmFooter: some View {
         VStack(spacing: 10) {
             Text(footerStatus)
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(size: 12, weight: .semibold)
                 .foregroundStyle(overBy > 0 ? Brand.warningText : Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -585,6 +594,9 @@ struct ReviewImportView: View {
             }
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             onFinish()
+            // A committed import is a moment of delight: the only place in this
+            // flow the rating prompt may be requested (once per app version).
+            ReviewPromptGate.requestIfEligible(requestReview)
         } catch {
             // Whatever landed before the failure is already on the guest list, so
             // drop those rows here. Retrying can't double them up, and the counts
@@ -635,24 +647,25 @@ private struct ParsedGuestRow: View {
             // reversible, unlike deleting the row.
             Button(action: onToggle) {
                 Image(systemName: willImport ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22))
+                    .scaledFont(size: 22)
                     .foregroundStyle(willImport ? Brand.accent : Brand.slate400)
                     .symbolRenderingMode(.hierarchical)
-                    .frame(width: 34, height: 34)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(willImport ? "Leave out \(guest.name)" : "Include \(guest.name)")
+            .accessibilityAddTraits(willImport ? [.isSelected] : [])
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(guest.name)
-                        .font(.system(size: 15, weight: .bold))
+                        .scaledFont(size: 15, weight: .bold)
                         .foregroundStyle(willImport ? Brand.textPrimary : Brand.textTertiary)
                         .strikethrough(!willImport, color: Brand.textTertiary)
                     if let hint = plusOneShort {
                         Text(hint)
-                            .font(.system(size: 12, weight: .medium))
+                            .scaledFont(size: 12, weight: .medium)
                             .foregroundStyle(Brand.textTertiary)
                     }
                 }
@@ -690,8 +703,9 @@ private struct ParsedGuestRow: View {
 
             // The chevron signals the row is tappable to edit (F5).
             Image(systemName: "chevron.right")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Brand.slate400)
+                .scaledFont(size: 15, weight: .bold)
+                .foregroundStyle(Brand.textSecondary)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 13)

@@ -219,4 +219,56 @@ enum FloorPlanGeometry {
     static func collisions(for item: Item, among others: [Item]) -> [String] {
         others.filter { $0.id != item.id && collides(item, $0) }.map(\.id)
     }
+
+    // MARK: - Free placement
+
+    /// Finds an unoccupied top-left for a new `size` item as close as possible
+    /// to `anchor` (the desired CENTER, e.g. the middle of the viewport). Walks
+    /// a square spiral outward from the anchor in `step` increments, nearest
+    /// cells first, and returns the first spot where the item, padded by
+    /// `clearance` on every side (chairs need breathing room), overlaps nothing
+    /// in `others`. Falls back to the anchor itself when `maxRings` rings turn
+    /// up nothing, so a caller always gets a usable position.
+    static func freePosition(near anchor: (x: Double, y: Double),
+                             size: (width: Double, height: Double),
+                             among others: [Item],
+                             clearance: Double = 24,
+                             step: Double = 24,
+                             maxRings: Int = 24) -> (x: Double, y: Double) {
+        let baseX = anchor.x - size.width / 2
+        let baseY = anchor.y - size.height / 2
+
+        func isFree(_ x: Double, _ y: Double) -> Bool {
+            let probe = Item(id: "__placement_probe__",
+                             x: x - clearance, y: y - clearance,
+                             width: size.width + 2 * clearance,
+                             height: size.height + 2 * clearance)
+            return collisions(for: probe, among: others).isEmpty
+        }
+
+        if others.isEmpty || isFree(baseX, baseY) { return (baseX, baseY) }
+
+        for ring in 1...max(1, maxRings) {
+            var cells: [(dx: Int, dy: Int)] = []
+            for dx in -ring...ring {
+                for dy in -ring...ring where max(abs(dx), abs(dy)) == ring {
+                    cells.append((dx, dy))
+                }
+            }
+            // Nearest-first within the ring (deterministic tie-break) so the
+            // result hugs the anchor instead of drifting to a corner.
+            cells.sort { a, b in
+                let da = a.dx * a.dx + a.dy * a.dy, db = b.dx * b.dx + b.dy * b.dy
+                if da != db { return da < db }
+                if a.dy != b.dy { return a.dy < b.dy }
+                return a.dx < b.dx
+            }
+            for cell in cells {
+                let x = baseX + Double(cell.dx) * step
+                let y = baseY + Double(cell.dy) * step
+                if isFree(x, y) { return (x, y) }
+            }
+        }
+        return (baseX, baseY)
+    }
 }

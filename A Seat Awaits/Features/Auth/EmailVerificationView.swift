@@ -20,41 +20,41 @@ struct EmailVerificationView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Image(systemName: "envelope.badge.fill")
-                    .font(.system(size: 40, weight: .semibold))
+                    .scaledFont(size: 40, weight: .semibold)
                     .foregroundStyle(Brand.accent)
                     .padding(.top, 48)
 
                 Text("Verify your email")
-                    .font(.system(size: 30, weight: .bold))
+                    .scaledFont(size: 30, weight: .bold)
                     .tracking(-0.6)
                     .foregroundStyle(Brand.textPrimary)
                     .padding(.top, 24)
 
                 Text("We sent a verification link to")
-                    .font(.system(size: 16))
+                    .scaledFont(size: 16)
                     .foregroundStyle(Brand.textSecondary)
                     .padding(.top, 8)
 
                 Text(model.pendingVerificationEmail ?? "your email")
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(size: 16, weight: .semibold)
                     .foregroundStyle(Brand.textPrimary)
                     .padding(.top, 2)
 
                 Text("Open it to confirm your account. The link expires after 24 hours. If it isn't in your inbox, check your spam folder.")
-                    .font(.system(size: 15))
+                    .scaledFont(size: 15)
                     .lineSpacing(3)
                     .foregroundStyle(Brand.textSecondary)
                     .padding(.top, 16)
 
                 if let info = model.verificationInfo {
                     Label(info, systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(size: 13, weight: .medium)
                         .foregroundStyle(Brand.successText)
                         .padding(.top, 16)
                 }
                 if let error = model.verificationError {
                     Label(error, systemImage: "exclamationmark.circle.fill")
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(size: 13, weight: .medium)
                         .foregroundStyle(Brand.danger)
                         .padding(.top, 16)
                 }
@@ -78,7 +78,7 @@ struct EmailVerificationView: View {
                 Button("I've verified, sign me in") {
                     onContinueToSignIn()
                 }
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(size: 15, weight: .semibold)
                 .foregroundStyle(Brand.accent)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 20)

@@ -33,6 +33,9 @@ struct AssignGuestsSheet: View {
     /// Narrows the Seated pool to one specific table.
     @State private var tableFilter: String?
     @State private var isSaving = false
+    /// Why the last seat attempt didn't land; the sheet stays open so the
+    /// planner can retry instead of discovering later that nothing happened.
+    @State private var saveError: String?
 
     /// "Unassigned first" is meaningless here — the list is already sectioned
     /// into Unassigned and Seated elsewhere.
@@ -105,8 +108,10 @@ struct AssignGuestsSheet: View {
         var byGroup: [String: [Guest]] = [:]
         var individuals: [Guest] = []
         for guest in filteredCandidates where !guest.isAssigned {
-            if let groupId = guest.groupId {
-                byGroup[groupId, default: []].append(guest)
+            // Group id when linked, else the bare group name — imported
+            // households only carry the name.
+            if let key = SeatingLogic.partyKey(for: guest) {
+                byGroup[key, default: []].append(guest)
             } else {
                 individuals.append(guest)
             }
@@ -203,7 +208,7 @@ struct AssignGuestsSheet: View {
             }
         } label: {
             Image(systemName: "arrow.up.arrow.down")
-                .font(.system(size: 14, weight: .bold))
+                .scaledFont(size: 14, weight: .bold)
                 .foregroundStyle(Brand.accent)
                 .frame(width: 38, height: 32)
                 .background(Brand.control, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -279,10 +284,10 @@ struct AssignGuestsSheet: View {
         } label: {
             HStack(spacing: 4) {
                 Text(label)
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(size: 13, weight: .bold)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
+                    .scaledFont(size: 10, weight: .bold)
             }
             .foregroundStyle(active ? Color.white : Brand.slate600)
             .padding(.horizontal, 13)
@@ -323,7 +328,7 @@ struct AssignGuestsSheet: View {
 
     private func sectionHeader(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .bold))
+            .scaledFont(size: 12, weight: .bold)
             .tracking(0.6)
             .foregroundStyle(Brand.textSecondary)
             .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 6, trailing: 20))
@@ -339,7 +344,7 @@ struct AssignGuestsSheet: View {
             Button(allPicked ? "Deselect all" : "Select all (\(block.guests.count))") {
                 if allPicked { selection.subtract(ids) } else { selection.formUnion(ids) }
             }
-            .font(.system(size: 13, weight: .bold))
+            .scaledFont(size: 13, weight: .bold)
             .foregroundStyle(Brand.accent)
         }
         .padding(.vertical, 2)
@@ -357,22 +362,22 @@ struct AssignGuestsSheet: View {
                 InitialsAvatar(name: guest.name, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(guest.name)
-                        .font(.system(size: 16, weight: .semibold))
+                        .scaledFont(size: 16, weight: .semibold)
                         .foregroundStyle(Brand.textPrimary)
                     if let group = guest.groupName, !group.isEmpty {
                         Text(group)
-                            .font(.system(size: 13))
+                            .scaledFont(size: 13)
                             .foregroundStyle(Brand.textSecondary)
                     }
                     if let subtitle {
                         Text(subtitle)
-                            .font(.system(size: 13, weight: .semibold))
+                            .scaledFont(size: 13, weight: .semibold)
                             .foregroundStyle(Brand.warningText)
                     }
                 }
                 Spacer()
                 Image(systemName: picked ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22))
+                    .scaledFont(size: 22)
                     .foregroundStyle(picked ? Brand.accent : Brand.slate400)
             }
             .contentShape(Rectangle())
@@ -397,7 +402,7 @@ struct AssignGuestsSheet: View {
     private var seatsLeftBadge: some View {
         let remaining = open - selection.count
         return Text(remaining >= 0 ? "\(remaining) left" : "\(-remaining) over")
-            .font(.system(size: 13, weight: .bold))
+            .scaledFont(size: 13, weight: .bold)
             .foregroundStyle(remaining > 0 ? Brand.textSecondary : Brand.warningText)
     }
 
@@ -405,19 +410,28 @@ struct AssignGuestsSheet: View {
     /// matter how long the guest list is.
     private var seatCTABar: some View {
         VStack(spacing: 10) {
+            if let saveError {
+                Label(saveError, systemImage: "exclamationmark.circle.fill")
+                    .scaledFont(size: 13, weight: .semibold)
+                    .foregroundStyle(Brand.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if projectedOver > 0 {
                 Label("This would seat \(seatedCount + selection.count) guests at \(table.name), which has \(capacity) seats. Unseat someone or edit the table to add more.",
                       systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(size: 13, weight: .semibold)
                     .foregroundStyle(Brand.warningText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Button {
                 seatSelected()
             } label: {
-                Text(selection.isEmpty
-                     ? "Select guests to seat"
-                     : "Seat \(selection.count) guest\(selection.count == 1 ? "" : "s")")
+                HStack(spacing: 8) {
+                    if isSaving { ProgressView().tint(.white) }
+                    Text(selection.isEmpty
+                         ? "Select guests to seat"
+                         : "Seat \(selection.count) guest\(selection.count == 1 ? "" : "s")")
+                }
             }
             .buttonStyle(.primaryBrand)
             .disabled(selection.isEmpty || isSaving)
@@ -436,9 +450,23 @@ struct AssignGuestsSheet: View {
         let picks = candidates.filter { selection.contains($0.id) }
         guard !picks.isEmpty else { return }
         isSaving = true
+        saveError = nil
         Task {
+            store.errorMessage = nil
             await store.assignWithUndo(picks, toTable: table.id)
-            dismiss()
+            isSaving = false
+            // Success means every pick actually sits here now — the store rolls
+            // the optimistic update back on failure, so this is the truth.
+            let landed = picks.allSatisfy { pick in
+                store.guests.first { $0.id == pick.id }?.tableId == table.id
+            }
+            if landed {
+                dismiss()
+            } else {
+                saveError = store.errorMessage
+                    ?? "Couldn't seat those guests. Check your connection and try again."
+                store.errorMessage = nil
+            }
         }
     }
 

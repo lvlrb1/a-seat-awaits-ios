@@ -42,13 +42,13 @@ struct DeleteAccountView: View {
     private var warningCard: some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 34))
+                .scaledFont(size: 34)
                 .foregroundStyle(Brand.danger)
             Text("This can't be undone")
-                .font(.system(size: 18, weight: .bold))
+                .scaledFont(size: 18, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             Text("Deleting your account permanently removes your data. Consider exporting it first from Data & Privacy.")
-                .font(.system(size: 14))
+                .scaledFont(size: 14)
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -61,16 +61,16 @@ struct DeleteAccountView: View {
     private var consequencesCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("What gets deleted")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(size: 16, weight: .bold)
                 .foregroundStyle(Brand.textPrimary)
             ForEach(consequences, id: \.self) { item in
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15))
+                        .scaledFont(size: 15)
                         .foregroundStyle(Brand.danger)
                         .frame(width: 18)
                     Text(item)
-                        .font(.system(size: 14))
+                        .scaledFont(size: 14)
                         .foregroundStyle(Brand.textSecondary)
                     Spacer(minLength: 0)
                 }
@@ -91,7 +91,7 @@ struct DeleteAccountView: View {
     private var confirmCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Type \(requiredPhrase) to confirm")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(size: 15, weight: .semibold)
                 .foregroundStyle(Brand.textPrimary)
 
             LabeledField(title: "Confirmation", isFocused: focused) {
@@ -102,7 +102,7 @@ struct DeleteAccountView: View {
             }
 
             Text("Deletion is completed securely in the app. You will be signed out as soon as your account and data are removed.")
-                .font(.system(size: 13))
+                .scaledFont(size: 13)
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -125,7 +125,7 @@ struct DeleteAccountView: View {
                         ProgressView().tint(.white)
                     }
                     Text(store.isDeletingAccount ? "Deleting Account…" : "Delete My Account")
-                        .font(.system(size: 17, weight: .bold))
+                        .scaledFont(size: 17, weight: .bold)
                 }
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)

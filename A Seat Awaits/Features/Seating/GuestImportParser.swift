@@ -177,13 +177,37 @@ enum GuestImportParser {
         s.split(separator: " ").first.map(String.init) ?? s
     }
 
-    /// A normalized key for duplicate detection: lowercased, trimmed, with runs
-    /// of whitespace collapsed to a single space (F6).
+    /// A normalized key for duplicate detection (F6): case- and diacritic-
+    /// insensitive ("José" == "jose"), punctuation stripped ("O'Brien" ==
+    /// "OBrien", "Smith-Jones" == "Smith Jones"), runs of whitespace collapsed.
     static func normalizedName(_ name: String) -> String {
-        name.lowercased()
+        let folded = name.folding(options: [.diacriticInsensitive, .caseInsensitive, .widthInsensitive],
+                                  locale: nil)
+        // Hyphens and slashes join words; every other punctuation mark vanishes.
+        let joiners = folded.map { ch -> Character in
+            ch == "-" || ch == "/" || ch == "_" ? " " : ch
+        }
+        let stripped = String(joiners).unicodeScalars.filter {
+            !CharacterSet.punctuationCharacters.contains($0) && !CharacterSet.symbols.contains($0)
+        }
+        return String(String.UnicodeScalarView(stripped))
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    /// For each name, whether it duplicates an `existing` normalized name or an
+    /// earlier name in the same list. The first occurrence within the list is
+    /// never flagged, so one copy still imports.
+    static func duplicateFlags(for names: [String], existing: Set<String>) -> [Bool] {
+        var seen = Set<String>()
+        return names.map { name in
+            let key = normalizedName(name)
+            guard !key.isEmpty else { return false }
+            if existing.contains(key) || seen.contains(key) { return true }
+            seen.insert(key)
+            return false
+        }
     }
 
     /// Title-cases each word of a name ("chris anderson" → "Chris Anderson").

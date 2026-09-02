@@ -6,6 +6,7 @@
 //  mutations the UI performs (add guest, assign to table, move tables, …).
 //
 
+import CoreGraphics
 import Foundation
 import Observation
 
@@ -204,9 +205,25 @@ nonisolated struct TemplateUpdateDTO: Encodable, Sendable {
 /// Throwaway decode target for writes whose returned representation we ignore.
 nonisolated struct EmptyRow: Decodable, Sendable {}
 
+/// The floor-plan canvas framing (zoom, scroll offset, sticky canvas box and
+/// whether the one-time fit has run), owned by the store so it outlives the
+/// `FloorPlanView` instance. The workspace swaps that view out every time the
+/// planner visits the Guests tab; without this the canvas would snap back to
+/// its initial fit on every return.
+@MainActor
+@Observable
+final class FloorPlanViewState {
+    var zoom: CGFloat = 1
+    var scrollOffset: CGPoint = .zero
+    var canvasBox: CGRect = .zero
+    var didInitialFit = false
+}
+
 @MainActor
 @Observable
 final class SeatingStore {
+    /// Canvas framing that survives tab switches (see `FloorPlanViewState`).
+    let floorPlanState = FloorPlanViewState()
     let event: Event
     private let supabase: SupabaseClient
 
@@ -263,6 +280,9 @@ final class SeatingStore {
     /// Connectivity failures surface only via the persistent offline banner — not
     /// a one-off alert — so a venue with weak Wi-Fi doesn't spam dialogs.
     private func report(_ error: Error) {
+        // A cancelled request (the view went away, a newer load superseded
+        // this one) is not a failure the planner needs to hear about.
+        if error is CancellationError { return }
         if FriendlyError.isOffline(error) {
             isOffline = true
         } else {
@@ -539,7 +559,12 @@ final class SeatingStore {
             )
             markReachable()
         } catch {
-            guests[index] = previous
+            // Re-resolve by id: the array may have been reordered or trimmed
+            // while the request was in flight, so the captured index could
+            // now point at a different guest.
+            if let current = guests.firstIndex(where: { $0.id == guest.id }) {
+                guests[current].tableId = previous.tableId
+            }
             report(error)
         }
     }
@@ -579,14 +604,32 @@ final class SeatingStore {
     }
 
     func deleteGuest(_ guest: Guest) async {
-        let snapshot = guests
-        guests.removeAll { $0.id == guest.id }
+        guard let removedIndex = guests.firstIndex(where: { $0.id == guest.id }) else { return }
+        let removed = guests.remove(at: removedIndex)
         do {
             try await supabase.delete("guests", query: [URLQueryItem(name: "id", value: "eq.\(guest.id)")])
             markReachable()
         } catch {
-            guests = snapshot
+            // Put just this guest back — never overwrite the whole array with
+            // a pre-await snapshot, which would discard concurrent changes.
+            reinsert(removed, into: &guests, preferredIndex: removedIndex)
             report(error)
+        }
+    }
+
+    /// Re-inserts a removed element at its old index (or the end if the array
+    /// has shrunk since), skipping the insert if it's somehow already present.
+    private func reinsert<T: Identifiable>(_ element: T, into array: inout [T], preferredIndex: Int) {
+        guard !array.contains(where: { $0.id == element.id }) else { return }
+        array.insert(element, at: min(preferredIndex, array.count))
+    }
+
+    /// Deletes rows by id in chunks so a long id list never overruns the URL.
+    private func deleteRows(from table: String, ids: [String]) async throws {
+        for chunk in ids.chunked(into: 80) {
+            try await supabase.delete(table, query: [
+                URLQueryItem(name: "id", value: "in.(\(chunk.joined(separator: ",")))")
+            ])
         }
     }
 
@@ -647,7 +690,7 @@ final class SeatingStore {
         let restore = guest
         await deleteGuest(guest)
         guard errorMessage == nil else { return }
-        undo.show("Deleted \(restore.name).") { [weak self] in
+        undo.show("Deleted “\(restore.name)”.") { [weak self] in
             guard let self else { return }
             Task {
                 do {
@@ -730,19 +773,78 @@ final class SeatingStore {
                 query: [URLQueryItem(name: "id", value: "eq.\(table.id)")],
                 returning: [SeatingTable].self
             )
-            if let updated = rows.first { tables[index] = updated }
-            return tables[index]
+            if let updated = rows.first, let current = tables.firstIndex(where: { $0.id == table.id }) {
+                tables[current] = updated
+            }
+            return tables.first { $0.id == table.id }
         } catch {
-            tables[index] = previous
+            // Re-resolve by id — the array may have changed during the await.
+            if let current = tables.firstIndex(where: { $0.id == table.id }) {
+                tables[current] = previous
+            }
             report(error)
             return nil
         }
     }
 
-    /// Inserts a copy of a table, offset slightly so it doesn't sit exactly on
-    /// top of the original. Guests are not copied.
-    func duplicateTable(_ table: SeatingTable) async {
-        let offset = TableScale.pointsPerFoot   // one foot down-and-right
+    /// Every seatable footprint on the canvas (tables + shapes), for placement
+    /// and collision checks. Rooms are containers and don't block placement.
+    var placementObstacles: [FloorPlanGeometry.Item] {
+        tables.map {
+            FloorPlanGeometry.Item(id: $0.id, x: $0.positionX ?? 80, y: $0.positionY ?? 80,
+                                   width: $0.width, height: $0.height, rotation: $0.rotationDegrees)
+        } + shapes.map {
+            FloorPlanGeometry.Item(id: $0.id, x: $0.positionX ?? 120, y: $0.positionY ?? 120,
+                                   width: $0.width, height: $0.height, rotation: $0.rotationDegrees)
+        }
+    }
+
+    /// Room footprints, for placing a new room clear of the existing ones.
+    var roomObstacles: [FloorPlanGeometry.Item] {
+        rooms.map {
+            FloorPlanGeometry.Item(id: $0.id, x: $0.positionX, y: $0.positionY,
+                                   width: $0.widthPoints, height: $0.heightPoints, rotation: 0)
+        }
+    }
+
+    /// Where a new item should be centered when the caller has no viewport to
+    /// go on (the Add sheet opened from the toolbar, say): the middle of the
+    /// first room, else the middle of whatever is already on the canvas, else
+    /// a comfortable spot near the origin. `FloorPlanGeometry.freePosition`
+    /// then nudges it off anything already there.
+    var defaultPlacementAnchor: (x: Double, y: Double) {
+        if let room = rooms.first {
+            return (room.positionX + room.widthPoints / 2, room.positionY + room.heightPoints / 2)
+        }
+        let items = placementObstacles
+        guard !items.isEmpty else { return (180, 180) }
+        var minX = Double.greatestFiniteMagnitude, minY = Double.greatestFiniteMagnitude
+        var maxX = -Double.greatestFiniteMagnitude, maxY = -Double.greatestFiniteMagnitude
+        for item in items {
+            let b = FloorPlanGeometry.bounds(item)
+            minX = min(minX, b.left); minY = min(minY, b.top)
+            maxX = max(maxX, b.right); maxY = max(maxY, b.bottom)
+        }
+        return ((minX + maxX) / 2, (minY + maxY) / 2)
+    }
+
+    /// Where a copy of an item should land: immediately to its right with a
+    /// one-foot gap, or the nearest free spot spiralling out from there when
+    /// that space is taken. Never on top of the original.
+    private func duplicatePosition(x: Double, y: Double,
+                                   width: Double, height: Double) -> (x: Double, y: Double) {
+        let gap = TableScale.pointsPerFoot
+        let anchor = (x: x + width + gap + width / 2, y: y + height / 2)
+        return FloorPlanGeometry.freePosition(near: anchor, size: (width, height),
+                                              among: placementObstacles)
+    }
+
+    /// Inserts a copy of a table beside the original (never overlapping it).
+    /// Guests are not copied. Returns the new table so the canvas can select it.
+    @discardableResult
+    func duplicateTable(_ table: SeatingTable) async -> SeatingTable? {
+        let spot = duplicatePosition(x: table.positionX ?? 80, y: table.positionY ?? 80,
+                                     width: table.width, height: table.height)
         do {
             let rows = try await supabase.insert(
                 "tables",
@@ -752,16 +854,20 @@ final class SeatingStore {
                                     capacity: table.capacity ?? 0,
                                     width: table.width,
                                     height: table.height,
-                                    position_x: (table.positionX ?? 0) + offset,
-                                    position_y: (table.positionY ?? 0) + offset,
+                                    position_x: spot.x,
+                                    position_y: spot.y,
                                     rotation: table.rotation ?? 0,
                                     description: table.description,
                                     is_custom: table.isCustom ?? false),
                 returning: [SeatingTable].self
             )
-            if let new = rows.first { tables.append(new) }
+            guard let new = rows.first else { return nil }
+            tables.append(new)
+            markReachable()
+            return new
         } catch {
             report(error)
+            return nil
         }
     }
 
@@ -770,22 +876,18 @@ final class SeatingStore {
     /// live state in the same render pass without the item flashing back to its
     /// old angle; the write happens in the background.
     func commitRotation(of table: SeatingTable, to degrees: Double) {
-        let normalized = ((degrees.truncatingRemainder(dividingBy: 360)) + 360)
-            .truncatingRemainder(dividingBy: 360)
-        if let index = tables.firstIndex(where: { $0.id == table.id }) {
-            tables[index].rotation = normalized
-        }
-        Task { await updateRotation(of: table, to: normalized) }
+        Task { await updateRotation(of: table, to: degrees) }
     }
 
-    /// Persists a table's rotation (normalised to 0..<360). Used by the canvas
-    /// "Rotate 15°" affordance.
+    /// Persists a table's rotation (normalised to 0..<360). The local angle is
+    /// applied synchronously before the first suspension and rolled back (by
+    /// id, and only if nothing newer replaced it) when the write fails.
     func updateRotation(of table: SeatingTable, to degrees: Double) async {
         let normalized = ((degrees.truncatingRemainder(dividingBy: 360)) + 360)
             .truncatingRemainder(dividingBy: 360)
-        if let index = tables.firstIndex(where: { $0.id == table.id }) {
-            tables[index].rotation = normalized
-        }
+        guard let index = tables.firstIndex(where: { $0.id == table.id }) else { return }
+        let previous = tables[index].rotation
+        tables[index].rotation = normalized
         do {
             _ = try await supabase.update(
                 "tables",
@@ -793,7 +895,12 @@ final class SeatingStore {
                 query: [URLQueryItem(name: "id", value: "eq.\(table.id)")],
                 returning: [SeatingTable].self
             )
+            markReachable()
         } catch {
+            if let current = tables.firstIndex(where: { $0.id == table.id }),
+               tables[current].rotation == normalized {
+                tables[current].rotation = previous
+            }
             report(error)
         }
     }
@@ -801,42 +908,74 @@ final class SeatingStore {
     /// Commits a moved table's new position. The local model is updated
     /// *synchronously* so the caller can clear its drag offset in the same render
     /// pass without the table flashing back to its old spot; the write to the
-    /// backend happens in the background.
+    /// backend happens in the background and rolls the move back on failure.
     func updatePosition(of table: SeatingTable, x: Double, y: Double) {
-        if let index = tables.firstIndex(where: { $0.id == table.id }) {
-            tables[index].positionX = x
-            tables[index].positionY = y
-        }
-        Task { await persistPosition(id: table.id, x: x, y: y) }
-    }
-
-    private func persistPosition(id: String, x: Double, y: Double) async {
-        do {
-            _ = try await supabase.update(
-                "tables",
-                values: TablePositionPatch(position_x: x, position_y: y),
-                query: [URLQueryItem(name: "id", value: "eq.\(id)")],
-                returning: [SeatingTable].self
-            )
-        } catch {
-            report(error)
+        guard let index = tables.firstIndex(where: { $0.id == table.id }) else { return }
+        let previous = (x: tables[index].positionX, y: tables[index].positionY)
+        tables[index].positionX = x
+        tables[index].positionY = y
+        Task {
+            await persist(table: "tables", id: table.id, x: x, y: y) { [weak self] in
+                guard let self,
+                      let current = self.tables.firstIndex(where: { $0.id == table.id }),
+                      self.tables[current].positionX == x, self.tables[current].positionY == y
+                else { return }
+                self.tables[current].positionX = previous.x
+                self.tables[current].positionY = previous.y
+            }
         }
     }
 
     func deleteTable(_ table: SeatingTable) async {
-        let tableSnapshot = tables
-        let guestSnapshot = guests
-        tables.removeAll { $0.id == table.id }
-        // Locally unassign guests that were at this table.
+        guard let removedIndex = tables.firstIndex(where: { $0.id == table.id }) else { return }
+        let removed = tables.remove(at: removedIndex)
+        // Locally unassign guests that were at this table, remembering who.
+        var unseated: [String] = []
         for index in guests.indices where guests[index].tableId == table.id {
             guests[index].tableId = nil
+            unseated.append(guests[index].id)
         }
         do {
             try await supabase.delete("tables", query: [URLQueryItem(name: "id", value: "eq.\(table.id)")])
+            markReachable()
         } catch {
-            tables = tableSnapshot
-            guests = guestSnapshot
+            reinsert(removed, into: &tables, preferredIndex: removedIndex)
+            for id in unseated {
+                if let index = guests.firstIndex(where: { $0.id == id }), guests[index].tableId == nil {
+                    guests[index].tableId = table.id
+                }
+            }
             report(error)
+        }
+    }
+
+    /// Deletes a table immediately, then offers an undo that re-creates it
+    /// (new row id) and re-seats everyone who was at it.
+    func deleteTableWithUndo(_ table: SeatingTable) async {
+        let restore = tables.first { $0.id == table.id } ?? table
+        let seatedIds = guests.filter { $0.tableId == table.id }.map(\.id)
+        await deleteTable(table)
+        guard errorMessage == nil, !tables.contains(where: { $0.id == table.id }) else { return }
+        undo.show("Deleted “\(restore.name)”.") { [weak self] in
+            guard let self else { return }
+            Task {
+                do {
+                    let new = try await self.addTable(name: restore.name,
+                                                      shape: restore.shape ?? .circle,
+                                                      capacity: restore.capacity ?? 0,
+                                                      width: restore.width,
+                                                      height: restore.height,
+                                                      positionX: restore.positionX ?? 80,
+                                                      positionY: restore.positionY ?? 80,
+                                                      description: restore.description,
+                                                      rotation: restore.rotation ?? 0,
+                                                      isCustom: restore.isCustom ?? false)
+                    let batch = self.guests.filter { seatedIds.contains($0.id) }
+                    if !batch.isEmpty { await self.assign(batch, toTable: new.id) }
+                } catch {
+                    self.report(error)
+                }
+            }
         }
     }
 
@@ -881,10 +1020,14 @@ final class SeatingStore {
                 query: [URLQueryItem(name: "id", value: "eq.\(room.id)")],
                 returning: [FloorPlanRoom].self
             )
-            if let updated = rows.first { rooms[index] = updated }
-            return rooms[index]
+            if let updated = rows.first, let current = rooms.firstIndex(where: { $0.id == room.id }) {
+                rooms[current] = updated
+            }
+            return rooms.first { $0.id == room.id }
         } catch {
-            rooms[index] = previous
+            if let current = rooms.firstIndex(where: { $0.id == room.id }) {
+                rooms[current] = previous
+            }
             report(error)
             return nil
         }
@@ -892,22 +1035,51 @@ final class SeatingStore {
 
     /// Commits a moved room's new position (top-left). See `updatePosition`.
     func updateRoomPosition(of room: FloorPlanRoom, x: Double, y: Double) {
-        if let index = rooms.firstIndex(where: { $0.id == room.id }) {
-            rooms[index].positionX = x
-            rooms[index].positionY = y
+        guard let index = rooms.firstIndex(where: { $0.id == room.id }) else { return }
+        let previous = (x: rooms[index].positionX, y: rooms[index].positionY)
+        rooms[index].positionX = x
+        rooms[index].positionY = y
+        Task {
+            await persist(table: "floorplan_rooms", id: room.id, x: x, y: y) { [weak self] in
+                guard let self,
+                      let current = self.rooms.firstIndex(where: { $0.id == room.id }),
+                      self.rooms[current].positionX == x, self.rooms[current].positionY == y
+                else { return }
+                self.rooms[current].positionX = previous.x
+                self.rooms[current].positionY = previous.y
+            }
         }
-        Task { await persist(table: "floorplan_rooms", id: room.id, x: x, y: y) }
     }
 
     func deleteRoom(_ room: FloorPlanRoom) async {
-        let snapshot = rooms
-        rooms.removeAll { $0.id == room.id }
+        guard let removedIndex = rooms.firstIndex(where: { $0.id == room.id }) else { return }
+        let removed = rooms.remove(at: removedIndex)
         do {
             try await supabase.delete("floorplan_rooms",
                                       query: [URLQueryItem(name: "id", value: "eq.\(room.id)")])
+            markReachable()
         } catch {
-            rooms = snapshot
+            reinsert(removed, into: &rooms, preferredIndex: removedIndex)
             report(error)
+        }
+    }
+
+    /// Deletes a room immediately with an undo that re-creates it in place.
+    func deleteRoomWithUndo(_ room: FloorPlanRoom) async {
+        let restore = rooms.first { $0.id == room.id } ?? room
+        await deleteRoom(room)
+        guard errorMessage == nil, !rooms.contains(where: { $0.id == room.id }) else { return }
+        undo.show("Deleted “\(restore.name)”.") { [weak self] in
+            guard let self else { return }
+            Task {
+                do {
+                    try await self.addRoom(name: restore.name,
+                                           widthFt: restore.widthFt, heightFt: restore.heightFt,
+                                           positionX: restore.positionX, positionY: restore.positionY)
+                } catch {
+                    self.report(error)
+                }
+            }
         }
     }
 
@@ -957,53 +1129,60 @@ final class SeatingStore {
                 query: [URLQueryItem(name: "id", value: "eq.\(shape.id)")],
                 returning: [DecorShape].self
             )
-            if let updated = rows.first { shapes[index] = updated }
-            return shapes[index]
+            if let updated = rows.first, let current = shapes.firstIndex(where: { $0.id == shape.id }) {
+                shapes[current] = updated
+            }
+            return shapes.first { $0.id == shape.id }
         } catch {
-            shapes[index] = previous
+            if let current = shapes.firstIndex(where: { $0.id == shape.id }) {
+                shapes[current] = previous
+            }
             report(error)
             return nil
         }
     }
 
-    /// Inserts a copy of a shape, offset one foot so it doesn't sit on top.
-    func duplicateShape(_ shape: DecorShape) async {
-        let offset = TableScale.pointsPerFoot
+    /// Inserts a copy of a shape beside the original (never overlapping it).
+    /// Returns the new shape so the canvas can select it.
+    @discardableResult
+    func duplicateShape(_ shape: DecorShape) async -> DecorShape? {
+        let spot = duplicatePosition(x: shape.positionX ?? 120, y: shape.positionY ?? 120,
+                                     width: shape.width, height: shape.height)
         do {
             let rows = try await supabase.insert(
                 "shapes",
                 values: NewShapeDTO(event_id: event.id, name: "\(shape.name) copy",
                                     type: shape.type.rawValue,
                                     width: shape.width, height: shape.height,
-                                    position_x: (shape.positionX ?? 0) + offset,
-                                    position_y: (shape.positionY ?? 0) + offset,
+                                    position_x: spot.x,
+                                    position_y: spot.y,
                                     rotation: shape.rotation ?? 0,
                                     description: shape.description),
                 returning: [DecorShape].self
             )
-            if let new = rows.first { shapes.append(new) }
+            guard let new = rows.first else { return nil }
+            shapes.append(new)
+            markReachable()
+            return new
         } catch {
             report(error)
+            return nil
         }
     }
 
     /// Commits a shape rotation from the canvas twist gesture. See `commitRotation`.
     func commitShapeRotation(of shape: DecorShape, to degrees: Double) {
-        let normalized = ((degrees.truncatingRemainder(dividingBy: 360)) + 360)
-            .truncatingRemainder(dividingBy: 360)
-        if let index = shapes.firstIndex(where: { $0.id == shape.id }) {
-            shapes[index].rotation = normalized
-        }
-        Task { await updateShapeRotation(of: shape, to: normalized) }
+        Task { await updateShapeRotation(of: shape, to: degrees) }
     }
 
-    /// Persists a shape's rotation (normalised to 0..<360).
+    /// Persists a shape's rotation (normalised to 0..<360), applying it locally
+    /// first and rolling back by id if the write fails.
     func updateShapeRotation(of shape: DecorShape, to degrees: Double) async {
         let normalized = ((degrees.truncatingRemainder(dividingBy: 360)) + 360)
             .truncatingRemainder(dividingBy: 360)
-        if let index = shapes.firstIndex(where: { $0.id == shape.id }) {
-            shapes[index].rotation = normalized
-        }
+        guard let index = shapes.firstIndex(where: { $0.id == shape.id }) else { return }
+        let previous = shapes[index].rotation
+        shapes[index].rotation = normalized
         do {
             _ = try await supabase.update(
                 "shapes",
@@ -1011,35 +1190,76 @@ final class SeatingStore {
                 query: [URLQueryItem(name: "id", value: "eq.\(shape.id)")],
                 returning: [DecorShape].self
             )
+            markReachable()
         } catch {
+            if let current = shapes.firstIndex(where: { $0.id == shape.id }),
+               shapes[current].rotation == normalized {
+                shapes[current].rotation = previous
+            }
             report(error)
         }
     }
 
     /// Commits a moved shape's new position (top-left). See `updatePosition`.
     func updateShapePosition(of shape: DecorShape, x: Double, y: Double) {
-        if let index = shapes.firstIndex(where: { $0.id == shape.id }) {
-            shapes[index].positionX = x
-            shapes[index].positionY = y
+        guard let index = shapes.firstIndex(where: { $0.id == shape.id }) else { return }
+        let previous = (x: shapes[index].positionX, y: shapes[index].positionY)
+        shapes[index].positionX = x
+        shapes[index].positionY = y
+        Task {
+            await persist(table: "shapes", id: shape.id, x: x, y: y) { [weak self] in
+                guard let self,
+                      let current = self.shapes.firstIndex(where: { $0.id == shape.id }),
+                      self.shapes[current].positionX == x, self.shapes[current].positionY == y
+                else { return }
+                self.shapes[current].positionX = previous.x
+                self.shapes[current].positionY = previous.y
+            }
         }
-        Task { await persist(table: "shapes", id: shape.id, x: x, y: y) }
     }
 
     func deleteShape(_ shape: DecorShape) async {
-        let snapshot = shapes
-        shapes.removeAll { $0.id == shape.id }
+        guard let removedIndex = shapes.firstIndex(where: { $0.id == shape.id }) else { return }
+        let removed = shapes.remove(at: removedIndex)
         do {
             try await supabase.delete("shapes",
                                       query: [URLQueryItem(name: "id", value: "eq.\(shape.id)")])
+            markReachable()
         } catch {
-            shapes = snapshot
+            reinsert(removed, into: &shapes, preferredIndex: removedIndex)
             report(error)
         }
     }
 
-    /// Shared position write for rooms/shapes (tables keep their own helper for
-    /// the synchronous-local-update contract documented on `updatePosition`).
-    private func persist(table: String, id: String, x: Double, y: Double) async {
+    /// Deletes a shape immediately with an undo that re-creates it in place.
+    func deleteShapeWithUndo(_ shape: DecorShape) async {
+        let restore = shapes.first { $0.id == shape.id } ?? shape
+        await deleteShape(shape)
+        guard errorMessage == nil, !shapes.contains(where: { $0.id == shape.id }) else { return }
+        undo.show("Deleted “\(restore.name)”.") { [weak self] in
+            guard let self else { return }
+            Task {
+                do {
+                    let new = try await self.addShape(name: restore.name, type: restore.type,
+                                                      width: restore.width, height: restore.height,
+                                                      positionX: restore.positionX ?? 120,
+                                                      positionY: restore.positionY ?? 120,
+                                                      description: restore.description)
+                    if restore.rotationDegrees != 0 {
+                        await self.updateShapeRotation(of: new, to: restore.rotationDegrees)
+                    }
+                } catch {
+                    self.report(error)
+                }
+            }
+        }
+    }
+
+    /// Shared position write for tables/rooms/shapes. The caller has already
+    /// applied the move locally; `rollback` runs on failure to undo it (by id,
+    /// and only if no newer move superseded it).
+    private func persist(table: String, id: String, x: Double, y: Double,
+                         rollback: @escaping @MainActor () -> Void) async {
         do {
             _ = try await supabase.update(
                 table,
@@ -1047,7 +1267,9 @@ final class SeatingStore {
                 query: [URLQueryItem(name: "id", value: "eq.\(id)")],
                 returning: [EmptyRow].self
             )
+            markReachable()
         } catch {
+            rollback()
             report(error)
         }
     }
@@ -1197,11 +1419,53 @@ final class SeatingStore {
         }
     }
 
+    /// Swaps the event's layout: inserts the new tables + rooms FIRST, and only
+    /// once every insert has landed deletes the old rows by id. The old order
+    /// (delete everything, then insert) left the event empty whenever the
+    /// insert failed. If a delete fails after the inserts, the freshly inserted
+    /// rows are removed again (best effort) so the server never holds both
+    /// layouts, and the caller re-syncs. Local state is untouched until the
+    /// whole swap succeeds.
+    private func replaceLayout(tables tableDTOs: [NewTableDTO],
+                               rooms roomDTOs: [NewRoomDTO],
+                               removingTables oldTables: [SeatingTable],
+                               removingRooms oldRooms: [FloorPlanRoom])
+        async throws -> (tables: [SeatingTable], rooms: [FloorPlanRoom]) {
+        var newTables: [SeatingTable] = []
+        var newRooms: [FloorPlanRoom] = []
+        func rollBackInserts() async {
+            // Best effort: a failure here is reported by the caller's reload.
+            try? await deleteRows(from: "tables", ids: newTables.map(\.id))
+            try? await deleteRows(from: "floorplan_rooms", ids: newRooms.map(\.id))
+        }
+        do {
+            if !tableDTOs.isEmpty {
+                newTables = try await supabase.insert("tables", values: tableDTOs,
+                                                      returning: [SeatingTable].self)
+            }
+            if !roomDTOs.isEmpty {
+                newRooms = try await supabase.insert("floorplan_rooms", values: roomDTOs,
+                                                     returning: [FloorPlanRoom].self)
+            }
+            // Rooms first: if the table delete then fails, the rollback leaves
+            // the planner with their tables (guests still seated) and no room,
+            // rather than rooms and no tables.
+            try await deleteRows(from: "floorplan_rooms", ids: oldRooms.map(\.id))
+            try await deleteRows(from: "tables", ids: oldTables.map(\.id))
+        } catch {
+            await rollBackInserts()
+            throw error
+        }
+        return (newTables, newRooms.sorted { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) })
+    }
+
     /// Applies a template to this event, **replacing** all current tables and
     /// rooms (matching the web's load-template behaviour). Decorative shapes are
     /// left untouched. Seated guests at the removed tables become unassigned (the
-    /// `tables` FK is `ON DELETE SET NULL`). On any failure the event is re-synced
-    /// from the server so local state never diverges.
+    /// `tables` FK is `ON DELETE SET NULL`). Built-in starter layouts flow
+    /// through here too; nothing ever touches the server's template table. On
+    /// any failure the event is re-synced from the server so local state never
+    /// diverges.
     func applyTemplate(_ template: FloorPlanTemplate) async {
         // Snapshot the layout being replaced so the apply can be undone (F3).
         let priorTables = tables
@@ -1209,41 +1473,32 @@ final class SeatingStore {
         var priorAssignments: [String: String?] = [:]
         for guest in guests { priorAssignments[guest.id] = guest.tableId }
 
+        let tableDTOs = template.tablesJson.map { t in
+            NewTableDTO(event_id: event.id, name: t.name, shape: t.shape,
+                        capacity: t.capacity, width: t.width, height: t.height,
+                        position_x: t.positionX, position_y: t.positionY,
+                        rotation: t.rotation, description: t.description,
+                        is_custom: t.isCustom ?? false)
+        }
+        let roomDTOs = template.roomsJson.map { r in
+            NewRoomDTO(event_id: event.id, name: r.name,
+                       width_ft: r.widthFt, height_ft: r.heightFt,
+                       position_x: r.positionX, position_y: r.positionY,
+                       color: nil, sort_order: r.sortOrder)
+        }
+
         do {
-            // 1. Clear the existing layout (tables + rooms) for this event.
-            try await supabase.delete("tables", query: [eventFilter])
-            try await supabase.delete("floorplan_rooms", query: [eventFilter])
+            let new = try await replaceLayout(tables: tableDTOs, rooms: roomDTOs,
+                                              removingTables: priorTables, removingRooms: priorRooms)
 
-            // 2. Bulk-insert the template's tables, then rooms.
-            var newTables: [SeatingTable] = []
-            if !template.tablesJson.isEmpty {
-                let dtos = template.tablesJson.map { t in
-                    NewTableDTO(event_id: event.id, name: t.name, shape: t.shape,
-                                capacity: t.capacity, width: t.width, height: t.height,
-                                position_x: t.positionX, position_y: t.positionY,
-                                rotation: t.rotation, description: t.description,
-                                is_custom: t.isCustom ?? false)
-                }
-                newTables = try await supabase.insert("tables", values: dtos, returning: [SeatingTable].self)
-            }
-            var newRooms: [FloorPlanRoom] = []
-            if !template.roomsJson.isEmpty {
-                let dtos = template.roomsJson.map { r in
-                    NewRoomDTO(event_id: event.id, name: r.name,
-                               width_ft: r.widthFt, height_ft: r.heightFt,
-                               position_x: r.positionX, position_y: r.positionY,
-                               color: nil, sort_order: r.sortOrder)
-                }
-                newRooms = try await supabase.insert("floorplan_rooms", values: dtos, returning: [FloorPlanRoom].self)
-            }
-
-            // 3. Commit locally: swap in the new layout, unassign every guest.
-            tables = newTables
-            rooms = newRooms.sorted { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }
+            // Commit locally: swap in the new layout, unassign every guest.
+            tables = new.tables
+            rooms = new.rooms
             for index in guests.indices { guests[index].tableId = nil }
+            markReachable()
 
-            // 4. Offer an undo that rebuilds the prior layout and re-seats guests.
-            undo.show("Applied “\(template.name).”") { [weak self] in
+            // Offer an undo that rebuilds the prior layout and re-seats guests.
+            undo.show("Applied “\(template.name)”.") { [weak self] in
                 guard let self else { return }
                 Task {
                     await self.restoreLayout(priorTables: priorTables,
@@ -1264,39 +1519,31 @@ final class SeatingStore {
     private func restoreLayout(priorTables: [SeatingTable],
                                priorRooms: [FloorPlanRoom],
                                assignments: [String: String?]) async {
+        let tableDTOs = priorTables.map { t in
+            NewTableDTO(event_id: event.id, name: t.name,
+                        shape: (t.shape ?? .circle).rawValue,
+                        capacity: t.capacity ?? 0, width: t.width, height: t.height,
+                        position_x: t.positionX ?? 0, position_y: t.positionY ?? 0,
+                        rotation: t.rotation ?? 0, description: t.description,
+                        is_custom: t.isCustom ?? false)
+        }
+        let roomDTOs = priorRooms.map { r in
+            NewRoomDTO(event_id: event.id, name: r.name,
+                       width_ft: r.widthFt, height_ft: r.heightFt,
+                       position_x: r.positionX, position_y: r.positionY,
+                       color: nil, sort_order: r.sortOrder)
+        }
         do {
-            try await supabase.delete("tables", query: [eventFilter])
-            try await supabase.delete("floorplan_rooms", query: [eventFilter])
-
-            var newTables: [SeatingTable] = []
-            if !priorTables.isEmpty {
-                let dtos = priorTables.map { t in
-                    NewTableDTO(event_id: event.id, name: t.name,
-                                shape: (t.shape ?? .circle).rawValue,
-                                capacity: t.capacity ?? 0, width: t.width, height: t.height,
-                                position_x: t.positionX ?? 0, position_y: t.positionY ?? 0,
-                                rotation: t.rotation ?? 0, description: t.description,
-                                is_custom: t.isCustom ?? false)
-                }
-                newTables = try await supabase.insert("tables", values: dtos, returning: [SeatingTable].self)
-            }
-            var newRooms: [FloorPlanRoom] = []
-            if !priorRooms.isEmpty {
-                let dtos = priorRooms.map { r in
-                    NewRoomDTO(event_id: event.id, name: r.name,
-                               width_ft: r.widthFt, height_ft: r.heightFt,
-                               position_x: r.positionX, position_y: r.positionY,
-                               color: nil, sort_order: r.sortOrder)
-                }
-                newRooms = try await supabase.insert("floorplan_rooms", values: dtos, returning: [FloorPlanRoom].self)
-            }
+            let new = try await replaceLayout(tables: tableDTOs, rooms: roomDTOs,
+                                              removingTables: tables, removingRooms: rooms)
+            let newTables = new.tables
 
             // Map old table id → new table id by insertion order.
             var idMap: [String: String] = [:]
             for (old, new) in zip(priorTables, newTables) { idMap[old.id] = new.id }
 
             tables = newTables
-            rooms = newRooms.sorted { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }
+            rooms = new.rooms
 
             // Re-seat guests at their former (now re-created) tables.
             var byNewTable: [String: [String]] = [:]
@@ -1326,13 +1573,16 @@ final class SeatingStore {
 
     /// Deletes a saved template. Optimistic with rollback.
     func deleteTemplate(_ template: FloorPlanTemplate) async {
-        let snapshot = templates
-        templates.removeAll { $0.id == template.id }
+        // Built-in starters are local only — nothing to delete.
+        guard !template.isBuiltIn,
+              let removedIndex = templates.firstIndex(where: { $0.id == template.id }) else { return }
+        let removed = templates.remove(at: removedIndex)
         do {
             try await supabase.delete("floorplan_templates",
                                       query: [URLQueryItem(name: "id", value: "eq.\(template.id)")])
+            markReachable()
         } catch {
-            templates = snapshot
+            reinsert(removed, into: &templates, preferredIndex: removedIndex)
             report(error)
         }
     }

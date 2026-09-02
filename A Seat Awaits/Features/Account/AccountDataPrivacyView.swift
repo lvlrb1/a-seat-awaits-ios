@@ -52,16 +52,16 @@ struct AccountDataPrivacyView: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Brand.accent.opacity(0.12))
                     Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 20, weight: .semibold))
+                        .scaledFont(size: 20, weight: .semibold)
                         .foregroundStyle(Brand.accent)
                 }
                 .frame(width: 46, height: 46)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Download My Data")
-                        .font(.system(size: 16, weight: .bold))
+                        .scaledFont(size: 16, weight: .bold)
                         .foregroundStyle(Brand.textPrimary)
                     Text("A JSON file with your profile, subscription, events, guests, floor plans and preferences.")
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13)
                         .foregroundStyle(Brand.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

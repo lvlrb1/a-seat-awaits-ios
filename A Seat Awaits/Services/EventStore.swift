@@ -7,6 +7,9 @@
 
 import Foundation
 import Observation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Insert payload for a new event. `owner_id` is set by the DB default.
 nonisolated struct NewEventDTO: Encodable, Sendable {
@@ -35,6 +38,13 @@ nonisolated struct SeatingSummaryParams: Encodable, Sendable {
 /// Empty body for RPCs that take no arguments (PostgREST still expects `{}`).
 nonisolated struct EmptyRPCParams: Encodable, Sendable {}
 
+/// Body / response of the `provision-sample-event` Edge Function.
+nonisolated struct ProvisionSampleEventBody: Encodable, Sendable {}
+nonisolated struct ProvisionSampleEventResponse: Decodable, Sendable {
+    let ok: Bool
+    let eventId: String?
+}
+
 @MainActor
 @Observable
 final class EventStore {
@@ -49,6 +59,8 @@ final class EventStore {
     /// events" from "we couldn't load your events" so the dashboard never
     /// shows a misleading empty state after a network failure.
     private(set) var loadFailed = false
+    /// True once a load has finished (success or failure) at least once.
+    private(set) var hasLoaded = false
 
     /// Shared undo banner for reversible actions on the dashboard (event delete).
     let undo = UndoToast()
@@ -77,8 +89,13 @@ final class EventStore {
                 as: [Event].self
             )
             loadFailed = false
+            hasLoaded = true
         } catch {
+            // A cancelled load (the dashboard left the screen) is not a
+            // failure: leave the previous state alone and stay silent.
+            guard !FriendlyError.isCancellation(error) else { return }
             loadFailed = true
+            hasLoaded = true
             errorMessage = FriendlyError.message(for: error)
         }
         await loadProgress()
@@ -123,6 +140,7 @@ final class EventStore {
                 as: [EventInvitation].self
             )
         } catch {
+            guard !FriendlyError.isCancellation(error) else { return }
             pendingInvites = []
         }
     }
@@ -140,8 +158,36 @@ final class EventStore {
             pendingInvites.removeAll { $0.id == invite.id }
             await load()
         } catch {
+            guard !FriendlyError.isCancellation(error) else { return }
             errorMessage = FriendlyError.message(for: error)
         }
+    }
+
+    // MARK: - Sample event
+
+    /// Asks the `provision-sample-event` Edge Function for the caller's
+    /// one-time sample event (idempotent server-side, once-ever marker; see the
+    /// function for the contract). Returns whether the call succeeded so the
+    /// caller can retry later; never throws, since the sample is a nice-to-have
+    /// and the dashboard works without it.
+    static func provisionSampleEvent(using supabase: SupabaseClient) async -> Bool {
+        do {
+            _ = try await supabase.invokeFunction("provision-sample-event",
+                                                  body: ProvisionSampleEventBody(),
+                                                  as: ProvisionSampleEventResponse.self)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Retries sample-event provisioning from the dashboard (after the sign-up
+    /// call failed) and reloads the events on success.
+    @discardableResult
+    func provisionSampleEventAndReload() async -> Bool {
+        guard await Self.provisionSampleEvent(using: supabase) else { return false }
+        await load()
+        return true
     }
 
     /// Creates an event. `owner_id` is assigned by the database default
@@ -216,20 +262,57 @@ final class EventStore {
             try await supabase.delete("events", query: [URLQueryItem(name: "id", value: "eq.\(event.id)")])
         } catch {
             events.insert(event, at: min(index, events.count))
+            guard !FriendlyError.isCancellation(error) else { return }
             errorMessage = FriendlyError.message(for: error)
         }
     }
 
     /// Immediately commits any pending delete (e.g. before the dashboard tears
-    /// down or another delete starts), skipping the remaining undo window.
+    /// down, another delete starts, or the app is backgrounded), skipping the
+    /// remaining undo window. When backgrounding, the commit runs inside a
+    /// UIKit background task so the request isn't lost if the app is
+    /// suspended or killed within the undo window.
     func flushPendingDelete() {
         guard let pending = pendingDelete else { return }
         pending.task.cancel()
+        #if canImport(UIKit)
+        let handle = BackgroundTaskHandle()
+        handle.begin()
+        Task {
+            await commitDelete(pending.event)
+            handle.end()
+        }
+        #else
         Task { await commitDelete(pending.event) }
+        #endif
     }
 }
 
-extension String {
+#if canImport(UIKit)
+/// Keeps the app alive long enough to finish one network request after it
+/// moves to the background.
+@MainActor
+private final class BackgroundTaskHandle {
+    private var id: UIBackgroundTaskIdentifier = .invalid
+
+    func begin() {
+        id = UIApplication.shared.beginBackgroundTask(withName: "event-delete") { [weak self] in
+            self?.end()
+        }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
+    }
+}
+#endif
+
+/// `nonisolated`: used from nonisolated model types (`Event`, `EventPass`,
+/// collaborator DTOs); under MainActor default isolation a plain extension
+/// would be main-actor-bound and warn at every such call site.
+nonisolated extension String {
     /// Returns nil when the string is empty/whitespace, otherwise the trimmed value.
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)

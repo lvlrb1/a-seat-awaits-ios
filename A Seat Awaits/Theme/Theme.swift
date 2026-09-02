@@ -64,12 +64,79 @@ extension Color {
     }
 }
 
+// MARK: - Palette hex constants
+
+/// The raw hex values behind the tokens that carry text, kept in one
+/// `nonisolated` place so the WCAG contrast tests can check the exact colors
+/// the views use.
+nonisolated enum BrandHex {
+    static let white = "#FFFFFF"
+    static let ink = "#0F172A"
+    static let slate600 = "#475569"
+    static let slate500 = "#64748B"
+    static let slate400 = "#94A3B8"
+    static let slate300 = "#CBD5E1"
+    static let slate200 = "#E2E8F0"
+    static let slate100 = "#F1F5F9"
+    static let slate50 = "#F8FAFC"
+    static let canvasDark = "#020617"
+    static let cardDark = "#0F172A"
+
+    static let successTextLight = "#15803D"
+    static let successFillLight = "#DCFCE7"
+    static let successTextDark = "#4ADE80"
+    static let successFillDark = "#052E16"
+    static let warningTextLight = "#92400E"
+    static let warningFillLight = "#FEF3C7"
+    static let warningTextDark = "#FBBF24"
+    static let warningFillDark = "#451A03"
+    static let inviteBgLight = "#FFFBEB"
+    static let inviteSubtitleLight = "#92400E"
+    static let skyText = "#075985"
+    static let skyFill = "#E0F2FE"
+    static let plum = "#43204f"
+    static let plumChipFill = "#F3E8FF"
+}
+
+/// WCAG 2.x relative-luminance contrast, for the palette tests.
+nonisolated enum ContrastRatio {
+    /// Contrast ratio (1...21) between two `#RRGGBB` colors.
+    static func between(_ a: String, _ b: String) -> Double {
+        let la = luminance(a), lb = luminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+
+    /// `fg` composited over `bg` at `alpha`, as `#RRGGBB`, so translucent text
+    /// can be checked against its effective color.
+    static func blend(_ fg: String, over bg: String, alpha: Double) -> String {
+        let f = rgb(fg), b = rgb(bg)
+        let out = zip(f, b).map { Int(($0 * alpha + $1 * (1 - alpha)).rounded()) }
+        return String(format: "#%02X%02X%02X", out[0], out[1], out[2])
+    }
+
+    static func luminance(_ hex: String) -> Double {
+        let channels = rgb(hex).map { c -> Double in
+            let s = c / 255
+            return s <= 0.03928 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    }
+
+    private static func rgb(_ hex: String) -> [Double] {
+        var s = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        if s.count == 3 { s = s.map { "\($0)\($0)" }.joined() }
+        var value: UInt64 = 0
+        Scanner(string: s).scanHexInt64(&value)
+        return [Double((value >> 16) & 0xff), Double((value >> 8) & 0xff), Double(value & 0xff)]
+    }
+}
+
 // MARK: - Brand palette
 
 enum Brand {
     // Identity
     /// Primary deep-plum brand color (`#43204f`).
-    static let plum = Color.hex("#43204f")
+    static let plum = Color.hex(BrandHex.plum)
     /// Lighter plum used as the primary/FAB fill in dark mode (`#6A3180`).
     static let plumDark = Color.hex("#6A3180")
     /// Gradient companion to `plum` on hero surfaces (`#5B2A6B`).
@@ -82,24 +149,24 @@ enum Brand {
     // Status — light-mode base hex (wrapped by the scheme-resolving tokens below;
     // do not reference these directly outside this file — use Brand.successText etc).
     static let success = Color.hex("#16A34A")     // seated / assigned (dot, ring)
-    private static let successTextLight = Color.hex("#15803D")  // seated text on tint
-    private static let successFillLight = Color.hex("#DCFCE7")  // seated chip fill
+    private static let successTextLight = Color.hex(BrandHex.successTextLight)  // seated text on tint
+    private static let successFillLight = Color.hex(BrandHex.successFillLight)  // seated chip fill
     private static let successBorderLight = Color.hex("#BBF7D0")
     static let warning = Color.hex("#F59E0B")      // open / unassigned
-    private static let warningTextLight = Color.hex("#B45309")  // amber text on tint
-    private static let warningFillLight = Color.hex("#FEF3C7")  // amber chip fill
+    private static let warningTextLight = Color.hex(BrandHex.warningTextLight)  // amber text on tint (6.4:1 on warningFill)
+    private static let warningFillLight = Color.hex(BrandHex.warningFillLight)  // amber chip fill
     private static let warningBorderLight = Color.hex("#FDE68A")
-    private static let inviteBgLight = Color.hex("#FFFBEB")
-    private static let inviteSubtitleLight = Color.hex("#92400E")
+    private static let inviteBgLight = Color.hex(BrandHex.inviteBgLight)
+    private static let inviteSubtitleLight = Color.hex(BrandHex.inviteSubtitleLight)
     static let danger = Color.hex("#DC2626")
 
     // Status — dark-mode fills/borders (chip backgrounds need a dark tint here;
     // the light hex values above are pale creams/pastels that read as
     // near-white-on-near-white once text switches to `textPrimary`'s white in
     // dark mode).
-    private static let successFillDark = Color.hex("#052E16")
+    private static let successFillDark = Color.hex(BrandHex.successFillDark)
     private static let successBorderDark = Color.hex("#166534")
-    private static let warningFillDark = Color.hex("#451A03")
+    private static let warningFillDark = Color.hex(BrandHex.warningFillDark)
     private static let warningBorderDark = Color.hex("#92400E")
 
     /// Muted mauve used for floor-plan seat rings (open seats / chair outlines).
@@ -108,29 +175,29 @@ enum Brand {
     static let seatRingDark = Color.hex("#B6A4C6")
 
     // Accent chip families
-    static let plumChipFill = Color.hex("#F3E8FF")   // assigned-to-table chip
+    static let plumChipFill = Color.hex(BrandHex.plumChipFill)   // assigned-to-table chip
     static let plumChipFillSoft = Color.hex("#FAF5FF")
-    static let skyText = Color.hex("#0369A1")        // household badge
-    static let skyFill = Color.hex("#E0F2FE")
+    static let skyText = Color.hex(BrandHex.skyText)        // household badge (6.6:1 on skyFill)
+    static let skyFill = Color.hex(BrandHex.skyFill)
     static let teal = Color.hex("#0EA5A4")           // group/household icon
 
     // Status — dark variants (brighter for contrast on navy)
-    static let successDark = Color.hex("#4ADE80")
-    static let warningDark = Color.hex("#FBBF24")
+    static let successDark = Color.hex(BrandHex.successTextDark)
+    static let warningDark = Color.hex(BrandHex.warningTextDark)
 
     // Neutral slate ramp (light surfaces & text)
-    static let ink = Color.hex("#0F172A")        // primary text (slate-900)
-    static let slate600 = Color.hex("#475569")   // field labels
-    static let slate500 = Color.hex("#64748B")   // body / subtitle
-    static let slate400 = Color.hex("#94A3B8")   // placeholder / fine print
-    static let slate300 = Color.hex("#CBD5E1")   // grabbers / disabled
-    static let slate200 = Color.hex("#E2E8F0")   // borders / dividers
-    static let slate100 = Color.hex("#F1F5F9")   // hairlines / track
-    static let slate50 = Color.hex("#F8FAFC")    // app background (light)
+    static let ink = Color.hex(BrandHex.ink)        // primary text (slate-900)
+    static let slate600 = Color.hex(BrandHex.slate600)   // field labels
+    static let slate500 = Color.hex(BrandHex.slate500)   // body / subtitle
+    static let slate400 = Color.hex(BrandHex.slate400)   // borders, dividers, icons (not body text: 2.6:1 on white)
+    static let slate300 = Color.hex(BrandHex.slate300)   // grabbers / disabled fills
+    static let slate200 = Color.hex(BrandHex.slate200)   // borders / dividers
+    static let slate100 = Color.hex(BrandHex.slate100)   // hairlines / track
+    static let slate50 = Color.hex(BrandHex.slate50)    // app background (light)
 
     // Dark slate-navy surfaces
-    static let canvasDark = Color.hex("#020617")     // root background
-    static let cardDark = Color.hex("#0F172A")       // card / panel
+    static let canvasDark = Color.hex(BrandHex.canvasDark)     // root background
+    static let cardDark = Color.hex(BrandHex.cardDark)       // card / panel
     static let elevatedDark = Color.hex("#334155")   // selected segment / borders
     static let hairlineDark = Color.hex("#1E293B")   // borders / dividers (dark)
 
@@ -148,8 +215,9 @@ enum Brand {
     static var textPrimary: Color { .dynamic(ink, .white) }
     /// Secondary text.
     static var textSecondary: Color { .dynamic(slate500, slate400) }
-    /// Tertiary text.
-    static var textTertiary: Color { .dynamic(slate400, Color.hex("#475569")) }
+    /// Tertiary text (fine print, placeholders). Kept at WCAG AA: slate-500 on
+    /// white is 4.8:1, slate-400 on slate-900 is 7:1.
+    static var textTertiary: Color { .dynamic(slate500, slate400) }
     /// Field box fill.
     static var fieldFill: Color { .dynamic(.white, cardDark) }
     /// Field border.
@@ -217,6 +285,7 @@ struct HeroBackground: View {
                 .offset(x: 130, y: 180)
         }
         .ignoresSafeArea()
+        .accessibilityHidden(true)
     }
 }
 
@@ -253,9 +322,9 @@ struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 17, weight: .bold))
+            .scaledFont(size: 17, weight: .bold)
             .frame(maxWidth: .infinity)
-            .frame(height: height)
+            .frame(minHeight: height)
             .background(Brand.primaryFill)
             .foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -275,9 +344,9 @@ struct SecondaryOutlineButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 16, weight: .bold))
+            .scaledFont(size: 16, weight: .bold)
             .frame(maxWidth: .infinity)
-            .frame(height: height)
+            .frame(minHeight: height)
             .background(Brand.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Brand.accent, lineWidth: 1.5))
@@ -295,10 +364,10 @@ struct WhiteButtonStyle: ButtonStyle {
     var height: CGFloat = 56
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 17, weight: .bold))
+            .scaledFont(size: 17, weight: .bold)
             .foregroundStyle(Brand.plum)
             .frame(maxWidth: .infinity)
-            .frame(height: height)
+            .frame(minHeight: height)
             .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .shadow(color: .black.opacity(0.35), radius: 15, x: 0, y: 10)
             .opacity(configuration.isPressed ? 0.9 : 1)
@@ -315,10 +384,10 @@ struct HeroOutlineButtonStyle: ButtonStyle {
     var height: CGFloat = 52
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 16, weight: .semibold))
+            .scaledFont(size: 16, weight: .semibold)
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .frame(height: height)
+            .frame(minHeight: height)
             .background(.white.opacity(configuration.isPressed ? 0.12 : 0),
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
