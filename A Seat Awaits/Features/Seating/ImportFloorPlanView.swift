@@ -347,7 +347,7 @@ struct ImportFloorPlanView: View {
             .foregroundStyle(Brand.accent)
             .underline()
 
-            Label("Our AI reads your plan as faithfully as it can, but nobody knows your venue like you do. Give the layout a quick once-over after importing — every table and fixture can be dragged, resized, and renamed until it's just right.",
+            Label("Our AI reads your plan as faithfully as it can, but nobody knows your venue like you do. Give the layout a quick once-over after importing. Every table and fixture can be dragged, resized, and renamed until it's just right.",
                   systemImage: "info.circle")
                 .font(.system(size: 12))
                 .foregroundStyle(Brand.textSecondary)

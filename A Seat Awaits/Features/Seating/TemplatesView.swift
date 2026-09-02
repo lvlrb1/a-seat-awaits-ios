@@ -12,6 +12,9 @@ import SwiftUI
 
 struct TemplatesView: View {
     @Bindable var store: SeatingStore
+    /// Opens the save-name prompt as soon as the sheet appears — the "Save as
+    /// Template" entry points use this so saving is one tap, not a hunt.
+    var promptSaveOnAppear = false
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingSavePrompt = false
@@ -44,6 +47,13 @@ struct TemplatesView: View {
                 }
             }
             .task { await store.fetchTemplates() }
+            .task {
+                guard promptSaveOnAppear, hasLayout else { return }
+                // Let the sheet's presentation animation settle before
+                // stacking the alert on top of it.
+                try? await Task.sleep(for: .milliseconds(450))
+                showingSavePrompt = true
+            }
             .overlay { if isWorking { workingOverlay } }
         }
         .alert(overwriteTarget == nil ? "Save template" : "Overwrite template",

@@ -71,7 +71,7 @@ struct EditParsedGuestSheet: View {
                     Text("Guest")
                 } footer: {
                     if needsConfirm {
-                        Text("Worth a quick look — tweak the name if needed. It imports either way.")
+                        Text("Worth a quick look. Tweak the name if needed; it imports either way.")
                     }
                 }
 

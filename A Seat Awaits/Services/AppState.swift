@@ -113,6 +113,15 @@ final class AppState {
         phase = .signedOut
     }
 
+    /// Finishes a successful server-side account deletion locally. The auth
+    /// user no longer exists, so clear the Keychain directly instead of issuing
+    /// a logout request with a token the server has already invalidated.
+    func didDeleteAccount() async {
+        await supabase?.clearDeletedAccountSession()
+        Analytics.reset()
+        phase = .signedOut
+    }
+
     /// Revokes every session for the user (sign out everywhere) and clears local
     /// state. The Supabase client clears the Keychain as part of `signOut`.
     func signOutEverywhere() async {

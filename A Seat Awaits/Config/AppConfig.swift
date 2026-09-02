@@ -26,7 +26,7 @@ enum AppConfig {
         var errorDescription: String? {
             switch self {
             case .missingSecretsFile:
-                return "Secrets.plist was not found in the app bundle. The \"Embed Environment Secrets\" build phase copies the per-environment file (Config/Secrets.Development.plist for Debug, Config/Secrets.Production.plist for Release) into the bundle — copy the matching Config/*.example.plist and fill in your Supabase URL and anon key."
+                return "Secrets.plist was not found in the app bundle. The \"Embed Environment Secrets\" build phase copies the per-environment file (Config/Secrets.Development.plist for Debug, Config/Secrets.Production.plist for Release) into the bundle. Copy the matching Config/*.example.plist and fill in your Supabase URL and anon key."
             case .missingKey(let key):
                 return "Secrets.plist is missing the required key \"\(key)\"."
             case .invalidURL(let value):

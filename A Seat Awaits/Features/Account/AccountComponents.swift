@@ -106,6 +106,8 @@ struct AccountRowLabel: View {
             if let badge {
                 Text(badge)
                     .font(.system(size: 12, weight: .bold))
+                    .lineLimit(1)
+                    .fixedSize()
                     .foregroundStyle(badgeColors.fg)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 3)
@@ -163,6 +165,8 @@ struct StatusBadge: View {
         Text(status.displayName.uppercased())
             .font(.system(size: 11, weight: .heavy))
             .tracking(0.5)
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(colors.fg)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)

@@ -143,7 +143,7 @@ struct TagPill: View {
             if let icon {
                 Image(systemName: icon).font(.system(size: 11, weight: .bold))
             }
-            Text(text).font(.system(size: 12, weight: .bold))
+            Text(text).font(.system(size: 12, weight: .bold)).lineLimit(1)
         }
         .foregroundStyle(fg)
         .padding(.horizontal, 10)
@@ -161,6 +161,34 @@ struct TagPill: View {
     static func neutral(_ text: String) -> TagPill { TagPill(text: text, fg: Brand.slate600, bg: Brand.control) }
 }
 
+/// A title with a trailing status pill that never crushes the title: the pill
+/// sits inline while there's room and drops below the title when there isn't.
+/// Use this instead of putting a title and a fixed-size pill in a plain HStack,
+/// where a tight fit squeezes the title into mid-word line breaks
+/// ("Essential / s plan").
+struct TitleBadgeRow<Title: View, Badge: View>: View {
+    /// Pushes the badge to the row's trailing edge (plan headers); when false
+    /// the badge hugs the title (compact cards).
+    var badgeAtTrailing: Bool = false
+    var spacing: CGFloat = 8
+    @ViewBuilder var title: Title
+    @ViewBuilder var badge: Badge
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: spacing) {
+                title.lineLimit(1).fixedSize()
+                if badgeAtTrailing { Spacer(minLength: spacing) }
+                badge
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                title.fixedSize(horizontal: false, vertical: true)
+                badge
+            }
+        }
+    }
+}
+
 /// Selectable filter chip with an optional count, e.g. "All · 47".
 struct FilterChip: View {
     let title: String
@@ -175,6 +203,7 @@ struct FilterChip: View {
     var body: some View {
         Text(label)
             .font(.system(size: 13, weight: .bold))
+            .lineLimit(1)
             .foregroundStyle(selected ? selectedFg : Brand.slate600)
             .padding(.horizontal, 13)
             .padding(.vertical, 6)
@@ -368,6 +397,7 @@ struct LiveBadge: View {
             Text("LIVE · \(name.uppercased())")
                 .font(.system(size: 11, weight: .heavy))
                 .tracking(0.6)
+                .lineLimit(1)
                 .foregroundStyle(Brand.successText)
         }
         .padding(.horizontal, 10)
@@ -395,7 +425,7 @@ struct ViewOnlyBadge: View {
         .padding(.vertical, 5)
         .background(Brand.control, in: Capsule())
         .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 1))
-        .accessibilityLabel("View only — you don't have permission to edit this event")
+        .accessibilityLabel("View only. You don't have permission to edit this event")
     }
 }
 
@@ -408,7 +438,7 @@ struct OfflineBanner: View {
         HStack(spacing: 8) {
             Image(systemName: "wifi.slash")
                 .font(.system(size: 13, weight: .bold))
-            Text("You're offline — changes will sync when you reconnect.")
+            Text("You're offline. Changes will sync when you reconnect.")
                 .font(.system(size: 13, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)

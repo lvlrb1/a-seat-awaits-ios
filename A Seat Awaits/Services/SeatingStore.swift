@@ -22,6 +22,14 @@ nonisolated struct NewGuestDTO: Encodable, Sendable {
     let table_id: String?
 }
 
+/// One reviewed import row on its way to `SeatingStore.addGuests`.
+nonisolated struct NewGuestDraft: Sendable {
+    let name: String
+    var groupName: String?
+    var notes: String?
+    var dietary: String?
+}
+
 nonisolated struct GuestTablePatch: Encodable, Sendable {
     let table_id: String?
 
@@ -414,6 +422,30 @@ final class SeatingStore {
 
     // MARK: - Guests
 
+    /// Guest slots left on this event under the current entitlement. `nil` while
+    /// the entitlement is still resolving, so callers never trim an import
+    /// against a cap they don't know yet.
+    var remainingGuestCapacity: Int? {
+        guard entitlementLoaded else { return nil }
+        return max(0, entitlement.guestCap - guests.count)
+    }
+
+    /// Shared upgrade copy for the cap gate. `wanted` is how many guests the
+    /// caller is trying to add, so a bulk import can say exactly how far over
+    /// the line it is instead of just "limit reached".
+    func guestCapMessage(wanted: Int = 1) -> String {
+        let room = max(0, entitlement.guestCap - guests.count)
+        let base = "This event allows \(entitlement.guestCap) guests on \(entitlement.guestCapSourceLabel)."
+        if room == 0 {
+            return "Guest limit reached. \(base) Upgrade to add more."
+        }
+        if wanted > room {
+            let over = wanted - room
+            return "\(base) There's room for \(room) more, so \(over) \(over == 1 ? "guest doesn't" : "guests don't") fit. Deselect \(over) or upgrade for more room."
+        }
+        return base
+    }
+
     @discardableResult
     func addGuest(name: String,
                   groupId: String?,
@@ -425,8 +457,7 @@ final class SeatingStore {
         // entitlement is known, reject adds beyond the event's guest cap with
         // upgrade copy instead of letting the DB bounce the insert.
         if entitlementLoaded, guests.count >= entitlement.guestCap {
-            throw GuestCapReachedError(
-                message: "Guest limit reached: this event allows \(entitlement.guestCap) guests on \(entitlement.guestCapSourceLabel). Upgrade to add more.")
+            throw GuestCapReachedError(message: guestCapMessage())
         }
         let rows = try await supabase.insert(
             "guests",
@@ -443,6 +474,40 @@ final class SeatingStore {
         guests.append(guest)
         markReachable()
         return guest
+    }
+
+    /// Bulk-inserts a reviewed import in chunks, so a 250-name list is a handful
+    /// of requests instead of 250 round trips. The whole batch is checked against
+    /// the event's guest cap up front (the review screen keeps the selection
+    /// inside it), and `onProgress` reports the running total after each chunk so
+    /// a mid-flight failure can still say exactly how many landed.
+    @discardableResult
+    func addGuests(_ drafts: [NewGuestDraft],
+                   onProgress: (Int) -> Void = { _ in }) async throws -> Int {
+        guard !drafts.isEmpty else { return 0 }
+        if entitlementLoaded, guests.count + drafts.count > entitlement.guestCap {
+            throw GuestCapReachedError(message: guestCapMessage(wanted: drafts.count))
+        }
+        var imported = 0
+        for chunk in drafts.chunked(into: 100) {
+            let rows = try await supabase.insert(
+                "guests",
+                values: chunk.map {
+                    NewGuestDTO(event_id: event.id,
+                                name: $0.name,
+                                group_id: nil,
+                                group_name: $0.groupName?.nilIfBlank,
+                                notes: $0.notes?.nilIfBlank,
+                                dietary_preference: $0.dietary?.nilIfBlank,
+                                table_id: nil)
+                },
+                returning: [Guest].self)
+            guests.append(contentsOf: rows)
+            imported += rows.count
+            onProgress(imported)
+        }
+        markReachable()
+        return imported
     }
 
     /// Runs a pasted/CSV list or an Excel file through the `ai-import-guests`
@@ -1281,5 +1346,17 @@ final class SeatingStore {
 
     func occupancy(of table: SeatingTable) -> Int {
         SeatingLogic.occupancy(of: table.id, guests: guests)
+    }
+}
+
+// MARK: - Chunking
+
+private extension Array {
+    /// Splits the array into consecutive slices of at most `size` elements.
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0, count > size else { return isEmpty ? [] : [Array(self)] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0 ..< Swift.min($0 + size, count)])
+        }
     }
 }

@@ -35,6 +35,7 @@ import {
   paidCents,
   passTierForProduct,
   passUpgradeForProduct,
+  verificationErrorDetails,
   verifyTransaction,
 } from "../_shared/apple.ts";
 
@@ -72,7 +73,7 @@ Deno.serve(async (req) => {
     try {
       verified = await verifyTransaction(jws);
     } catch (err) {
-      logWarn(FN, cid, "jws_verify_failed", { err: String(err).slice(0, 160) });
+      logWarn(FN, cid, "jws_verify_failed", verificationErrorDetails(err));
       throw new HttpError(400, "The App Store receipt couldn't be verified.", { code: "invalid_jws" });
     }
     const tx = verified.transaction;

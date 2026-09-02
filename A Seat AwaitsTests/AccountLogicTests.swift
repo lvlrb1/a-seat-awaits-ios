@@ -158,6 +158,13 @@ import Foundation
     #expect(isSuccess(AccountValidation.validatePassword(current: "old", new: "abcdefgh", confirm: "abcdefgh")))
 }
 
+@Test func accountDeletionRequiresExactConfirmationPhrase() {
+    #expect(AccountDeletion.isConfirmed("DELETE"))
+    #expect(AccountDeletion.isConfirmed("  delete\n"))
+    #expect(!AccountDeletion.isConfirmed("DEL"))
+    #expect(!AccountDeletion.isConfirmed("DELETE ACCOUNT"))
+}
+
 // MARK: - CSV escaping
 
 @Test func csvEscapingQuotesWhenNeeded() {

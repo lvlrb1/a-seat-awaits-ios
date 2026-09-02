@@ -1,8 +1,7 @@
-# Per-function deploy settings. Gateway-level verify_jwt is disabled for all
-# three functions: apple-webhook receives App Store Server Notifications with
-# no Bearer token (authenticity = the signed payload's certificate chain), and
-# the authenticated sync functions verify the JWT themselves via requireUser()
-# so they can return a structured 401 instead of an opaque gateway error.
+# Per-function deploy settings. Gateway-level verify_jwt is disabled here:
+# apple-webhook authenticates App Store notifications from their signed payload,
+# while authenticated functions verify the JWT themselves via requireUser() so
+# they can return a structured 401 instead of an opaque gateway error.
 
 project_id = "a-seat-awaits"
 
@@ -13,4 +12,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.apple-webhook]
+verify_jwt = false
+
+[functions.account-delete]
 verify_jwt = false

@@ -71,6 +71,8 @@ struct FloorPlanView: View {
     @State private var editingRoom: FloorPlanRoom?
     @State private var showingAddRoom = false
     @State private var showingTemplates = false
+    /// Templates sheet with the save-name prompt pre-opened ("Save as Template").
+    @State private var showingSaveTemplate = false
     @State private var showingImportPlan = false
     /// Opt-in snap to the 2ft grid; gentle alignment guides are always on.
     @State private var snapToGrid = false
@@ -183,6 +185,9 @@ struct FloorPlanView: View {
         }
         .sheet(isPresented: $showingAddRoom) { AddRoomView(store: store) }
         .sheet(isPresented: $showingTemplates) { TemplatesView(store: store) }
+        .sheet(isPresented: $showingSaveTemplate) {
+            TemplatesView(store: store, promptSaveOnAppear: true)
+        }
         .sheet(isPresented: $showingImportPlan) { ImportFloorPlanView(store: store) }
         .sensoryFeedback(.error, trigger: errorTick)
         .onAppear { pulse = true }
@@ -441,7 +446,11 @@ struct FloorPlanView: View {
                    alignment: .topLeading)
             // No zooming while an item is mid-drag/twist — a stray second
             // finger would otherwise rescale the canvas under the move.
-            .gesture(activeDrag == nil && activeRotation == nil ? magnifyGesture : nil)
+            // Simultaneous, not exclusive: the ScrollView's own two-finger pan
+            // would otherwise win the recognizer race and cancel the pinch on
+            // most attempts. The handler anchors against the live offset, so
+            // pan and zoom compose instead of fighting.
+            .simultaneousGesture(activeDrag == nil && activeRotation == nil ? magnifyGesture : nil)
         }
         .scrollPosition($scrollPosition)
         // Mirror the live content offset so focal-point pinch zoom can anchor on it.
@@ -648,7 +657,9 @@ struct FloorPlanView: View {
     /// the focal point captured at the pinch's start and move the scroll offset to
     /// compensate each frame, instead of letting the canvas grow from a corner.
     private var magnifyGesture: some Gesture {
-        MagnifyGesture()
+        // Zero activation threshold: the default delta lets the scroll pan
+        // claim the touches before the pinch registers any scale change.
+        MagnifyGesture(minimumScaleDelta: 0)
             .onChanged { value in
                 let start = pinchStart ?? {
                     let s = PinchStart(anchor: value.startLocation, zoom: zoom, offset: scrollOffset)
@@ -1044,6 +1055,12 @@ struct FloorPlanView: View {
             Divider()
             Button { showingImportPlan = true } label: { Label("Import Plan…", systemImage: "wand.and.stars") }
             Button { showingTemplates = true } label: { Label("Templates…", systemImage: "square.grid.3x3.square") }
+            // Spelled out as its own action — buried inside "Templates…" nobody
+            // could find how to save a layout for reuse.
+            Button { showingSaveTemplate = true } label: {
+                Label("Save as Template…", systemImage: "square.and.arrow.down")
+            }
+            .disabled(store.tables.isEmpty && store.rooms.isEmpty)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus").font(.system(size: 17, weight: .heavy))
@@ -1285,7 +1302,10 @@ struct FloorPlanView: View {
                        action: { fitToLayout() },
                        accessibility: "Fit to layout")
             Divider().frame(width: 40)
-            zoomButton(icon: "plus", action: { zoomCentered(to: zoom + 0.2) }, accessibility: "Zoom in")
+            // Multiplicative steps: a fixed absolute increment is a huge jump at
+            // the zoomed-out levels fit-to-layout lands on; ×1.25 feels the same
+            // at every level.
+            zoomButton(icon: "plus", action: { zoomCentered(to: zoom * 1.25) }, accessibility: "Zoom in")
             // Current zoom percent — tap to snap back to 100%.
             Button { zoomCentered(to: 1) } label: {
                 Text("\(Int((effectiveZoom * 100).rounded()))%")
@@ -1296,7 +1316,7 @@ struct FloorPlanView: View {
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Reset zoom to 100%")
-            zoomButton(icon: "minus", action: { zoomCentered(to: zoom - 0.2) }, accessibility: "Zoom out")
+            zoomButton(icon: "minus", action: { zoomCentered(to: zoom / 1.25) }, accessibility: "Zoom out")
         }
         .background(Brand.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1384,7 +1404,7 @@ struct FloorPlanView: View {
         let hasRoom = open == nil || (open ?? 0) > 0
         guard hasRoom else {
             errorTick &+= 1
-            withAnimation { toast = AssignToast(text: "\(table.name) is full — tap a table with open seats.",
+            withAnimation { toast = AssignToast(text: "\(table.name) is full. Tap a table with open seats.",
                                                 isSuccess: false) }
             Task {
                 try? await Task.sleep(for: .seconds(2.4))
@@ -1784,7 +1804,7 @@ struct TableNodeView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
         .accessibilityHint(assigning
-                           ? (isFull ? "Full — no open seats" : "Double tap to seat the guest here")
+                           ? (isFull ? "Full, no open seats" : "Double tap to seat the guest here")
                            : "Double tap to select")
     }
 

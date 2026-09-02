@@ -229,6 +229,13 @@ nonisolated struct PlanPolicy: Sendable, Equatable {
     /// True when a paid plan's access is currently reduced to Free by its status.
     var isAccessReducedByStatus: Bool { nominalTier != .free && !isEntitled }
 
+    /// True when a paid plan has ended for good (canceled or expired), as opposed
+    /// to a recoverable payment issue. Drives the compact "this plan is over"
+    /// presentation instead of warnings that ask the user to fix billing.
+    var isPlanEnded: Bool {
+        nominalTier != .free && (status == .canceled || status == .incompleteExpired)
+    }
+
     /// Whether the user can use export/print right now.
     var canExportAndPrint: Bool { limits.exportAndPrint }
 

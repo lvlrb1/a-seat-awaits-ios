@@ -4,8 +4,8 @@
 //
 //  Value types backing the native Manage Account experience: the authoritative
 //  `public.subscriptions` row, the aggregated account snapshot the UI renders,
-//  the export row DTOs, and the small set of secure external destinations the
-//  app may open for privileged operations (Stripe billing, account deletion).
+//  the export row DTOs, account-deletion request/response values, and the small
+//  set of secure external destinations the app may open (billing and legal).
 //
 //  All of these are plain `Sendable` data. Loading and mutation live in
 //  `AccountStore`; formatting lives in the views.
@@ -149,21 +149,38 @@ nonisolated struct AccountSnapshot: Equatable, Sendable {
     }
 }
 
+// MARK: - Account deletion
+
+/// Values shared by the deletion screen and its authenticated Edge Function
+/// request. The server independently verifies this exact confirmation phrase;
+/// client-side validation is only for immediate UI feedback.
+nonisolated enum AccountDeletion {
+    static let requiredPhrase = "DELETE"
+
+    static func isConfirmed(_ value: String) -> Bool {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == requiredPhrase
+    }
+}
+
+nonisolated struct AccountDeletionRequest: Encodable, Sendable {
+    let confirmation: String
+}
+
+nonisolated struct AccountDeletionResponse: Decodable, Sendable, Equatable {
+    let ok: Bool
+}
+
 // MARK: - Secure external destinations
 
-/// The only external web destinations the app opens. Used for privileged
-/// operations that must not run with a user JWT (Stripe billing, deleting
-/// `auth.users`) and for legal documents. The upgrade call-to-action is
-/// configurable so it can be tuned for App Store storefront compliance.
+/// The only external web destinations the app opens. Used for billing and legal
+/// documents. Account deletion stays in-app and calls an authenticated Edge
+/// Function, so it never depends on a public website route.
 nonisolated enum AccountLinks {
     static let base = URL(string: "https://aseatawaits.com")!
 
     /// Secure billing/customer-portal management page (manage subscription,
     /// payment method, invoices, resume/cancel — all confirmed by Stripe there).
     static let billing = URL(string: "https://aseatawaits.com/account/billing")!
-
-    /// Account settings page where deletion is completed securely server-side.
-    static let accountSettings = URL(string: "https://aseatawaits.com/account")!
 
     static let pricing = URL(string: "https://aseatawaits.com/pricing")!
     static let privacyPolicy = URL(string: "https://aseatawaits.com/privacy.pdf")!

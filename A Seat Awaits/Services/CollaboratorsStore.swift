@@ -284,7 +284,7 @@ final class CollaboratorsStore {
         await load()
 
         if failures > 0 {
-            errorMessage = "Some of \(person.displayName)'s access could not be removed (\(failures) of \(person.entries.count)). The list has been refreshed — please try again."
+            errorMessage = "Some of \(person.displayName)'s access could not be removed (\(failures) of \(person.entries.count)). The list has been refreshed. Please try again."
         }
     }
 

@@ -20,10 +20,11 @@ struct ImportGuestsView: View {
 
     @State private var showingPaywall = false
 
-    /// AI structuring is a paid feature (any Event Pass, or the Pro plan). Free
-    /// accounts keep the on-device parser for typed/pasted lists; Excel needs
-    /// the AI Edge Function, so it's blocked when gated. The edge function
-    /// enforces this server-side — the gate keeps the UI honest.
+    /// AI structuring is a paid feature (Standard/Premium Event Pass, or the
+    /// Pro plan — Starter passes exclude it). Free accounts keep the on-device
+    /// parser for typed/pasted lists; Excel needs the AI Edge Function, so it's
+    /// blocked when gated. The edge function enforces this server-side — the
+    /// gate keeps the UI honest.
     private var aiAllowed: Bool { store.entitlement.aiImport }
 
     /// The event is already at its plan/pass guest cap — importing more would
@@ -87,6 +88,9 @@ struct ImportGuestsView: View {
                         if atCapacity {
                             capacityBanner
                                 .padding(.top, 12)
+                        } else if let room = store.remainingGuestCapacity {
+                            roomHint(room)
+                                .padding(.top, 10)
                         }
 
                         dropZone
@@ -165,7 +169,7 @@ struct ImportGuestsView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Brand.purple)
-                Text("AI import is included with any Event Pass, or the Pro plan.")
+                Text("AI import is included with a Standard or Premium Event Pass, or the Pro plan.")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Brand.accent)
                     .fixedSize(horizontal: false, vertical: true)
@@ -205,6 +209,22 @@ struct ImportGuestsView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Brand.plumChipFill, lineWidth: 1)
         )
+    }
+
+    /// Sets expectations before the planner pastes a list: how many guests this
+    /// event can still take. The review step trims a longer list to fit rather
+    /// than failing part way through.
+    private func roomHint(_ room: Int) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "person.2")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+            Text("Room for \(room.formatted()) more \(room == 1 ? "guest" : "guests") on \(store.entitlement.guestCapSourceLabel).")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     /// Blocks the import when the event is already at its guest cap.
@@ -451,7 +471,7 @@ struct ImportGuestsView: View {
                 return .success(GuestImportParser.parse(text))
             case .file:
                 // Unreachable: the file picker rejects spreadsheets when gated.
-                return .failure("Excel import requires an Event Pass or the Pro plan.")
+                return .failure("Excel import requires a Standard or Premium Event Pass, or the Pro plan.")
             }
         }
         do {
@@ -479,7 +499,7 @@ struct ImportGuestsView: View {
                     // Binary spreadsheet — parsed server-side by the AI Edge
                     // Function, so it's a paid-only input.
                     guard aiAllowed else {
-                        importError = "Excel files are structured with AI import, included with any Event Pass or the Pro plan. Export your sheet as CSV, or upgrade to import it directly."
+                        importError = "Excel files are structured with AI import, included with a Standard or Premium Event Pass or the Pro plan. Export your sheet as CSV, or upgrade to import it directly."
                         return
                     }
                     // Hold it as an attachment; clearing pasteText keeps the

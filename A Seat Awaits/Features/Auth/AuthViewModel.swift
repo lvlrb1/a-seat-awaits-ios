@@ -202,11 +202,11 @@ final class AuthViewModel {
         defer { isResendingVerification = false }
         do {
             let response = try await emailService.sendVerificationEmail(to: email)
-            verificationInfo = "We sent a verification link to \(email). Check your inbox — it may take a minute."
+            verificationInfo = "We sent a verification link to \(email). Check your inbox. It may take a minute."
             startCooldown(\.verificationCooldownEndsAt, seconds: response.retryAfterSeconds ?? 60)
         } catch let error as EdgeFunctionError {
             if let retry = error.retryAfterSeconds {
-                verificationInfo = "We sent a verification link to \(email). Check your inbox — it may take a minute."
+                verificationInfo = "We sent a verification link to \(email). Check your inbox. It may take a minute."
                 startCooldown(\.verificationCooldownEndsAt, seconds: retry)
             } else {
                 verificationError = error.localizedDescription

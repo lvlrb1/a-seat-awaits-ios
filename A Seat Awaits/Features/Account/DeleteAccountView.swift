@@ -2,25 +2,24 @@
 //  DeleteAccountView.swift
 //  A Seat Awaits
 //
-//  Permanent account deletion. Deleting `auth.users` and canceling the Stripe
-//  subscription are privileged operations that cannot run safely with a user JWT
-//  and the app ships no service-role key or Edge Function for them, so the final
-//  step is completed on the secure account page. This screen makes the
-//  consequences explicit and requires a typed confirmation before opening it.
+//  Permanent account deletion. The app invokes an authenticated Edge Function;
+//  the service-role credential stays server-side and the user identity is
+//  derived from the verified JWT. This screen makes the consequences explicit,
+//  requires a typed confirmation, and never redirects to a website.
 //
 
 import SwiftUI
 
 struct DeleteAccountView: View {
     @Bindable var store: AccountStore
-    @Environment(\.openURL) private var openURL
 
     @State private var confirmationText = ""
-    private let requiredPhrase = "DELETE"
+    @State private var errorMessage: String?
+    @State private var showingFinalConfirmation = false
     @FocusState private var focused: Bool
 
     private var canProceed: Bool {
-        confirmationText.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == requiredPhrase
+        AccountDeletion.isConfirmed(confirmationText) && !store.isDeletingAccount
     }
 
     var body: some View {
@@ -86,7 +85,7 @@ struct DeleteAccountView: View {
         "Your profile and sign-in",
         "All events you own, with their guests, tables and floor plans",
         "Saved floor-plan templates and import preferences",
-        "Your subscription (canceled as part of deletion)",
+        "Your subscription record and all Event Passes",
     ]
 
     private var confirmCard: some View {
@@ -102,28 +101,75 @@ struct DeleteAccountView: View {
                     .focused($focused)
             }
 
-            Text("For your security, account deletion is completed on our website. We'll open your account page where you can permanently delete it.")
+            Text("Deletion is completed securely in the app. You will be signed out as soon as your account and data are removed.")
                 .font(.system(size: 13))
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if hasPotentialRecurringBilling {
+                FeedbackBanner(
+                    kind: .info,
+                    message: "Deleting your account does not cancel recurring billing managed by Apple or Stripe. Cancel with your billing provider first to avoid future charges.")
+            }
+
+            if let errorMessage {
+                FeedbackBanner(kind: .error, message: errorMessage)
+            }
+
             Button(role: .destructive) {
-                openURL(AccountLinks.accountSettings)
+                focused = false
+                showingFinalConfirmation = true
             } label: {
-                Text("Continue to Delete Account")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 54)
-                    .background(canProceed ? Brand.danger : Brand.slate300,
-                                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                HStack(spacing: 8) {
+                    if store.isDeletingAccount {
+                        ProgressView().tint(.white)
+                    }
+                    Text(store.isDeletingAccount ? "Deleting Account…" : "Delete My Account")
+                        .font(.system(size: 17, weight: .bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
+                .background(canProceed ? Brand.danger : Brand.slate300,
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(!canProceed)
-            .accessibilityHint("Opens your account page in the browser to complete deletion")
+            .accessibilityHint("Permanently deletes your account and data")
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .brandCard()
+        .alert("Permanently delete your account?", isPresented: $showingFinalConfirmation) {
+            Button("Delete Account", role: .destructive) {
+                Task { await deleteAccount() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This cannot be undone. Your account, owned events, guest lists, floor plans, and saved preferences will be permanently removed.")
+        }
+    }
+
+    private var requiredPhrase: String { AccountDeletion.requiredPhrase }
+
+    private var hasPotentialRecurringBilling: Bool {
+        guard let snapshot = store.snapshot,
+              snapshot.billingProvider != BillingProvider.none else { return false }
+        switch snapshot.policy.status {
+        case .canceled, .incompleteExpired:
+            return false
+        default:
+            return true
+        }
+    }
+
+    private func deleteAccount() async {
+        errorMessage = nil
+        switch await store.deleteAccount(confirmation: confirmationText) {
+        case .success:
+            break // RootView moves to onboarding when AppState becomes signed out.
+        case .failure(let error):
+            errorMessage = AccountStore.message(for: error)
+        }
     }
 }

@@ -127,6 +127,13 @@ actor SupabaseClient {
         setSession(nil)
     }
 
+    /// Clears credentials without making a logout request. Used only after the
+    /// server has permanently deleted the auth user, when there is no remaining
+    /// session to revoke remotely.
+    func clearDeletedAccountSession() {
+        setSession(nil)
+    }
+
     // MARK: - Authenticated user (GoTrue /user)
 
     /// Fetches the full authenticated user from `GET /auth/v1/user`, including

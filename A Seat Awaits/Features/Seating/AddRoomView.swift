@@ -65,7 +65,7 @@ struct AddRoomView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Tables stay put — only the room boundary is removed.")
+                Text("Tables stay put. Only the room boundary is removed.")
             }
         }
     }

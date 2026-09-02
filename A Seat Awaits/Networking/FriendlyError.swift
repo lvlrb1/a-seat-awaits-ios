@@ -16,7 +16,7 @@ enum FriendlyError {
     /// everything else falls back to a calm generic line (never a stack-y string).
     static func message(for error: Error) -> String {
         if isOffline(error) {
-            return "You're offline. Your changes weren't saved — reconnect and try again."
+            return "You're offline. Your changes weren't saved. Reconnect and try again."
         }
 
         if let supabase = error as? SupabaseError {
@@ -32,7 +32,7 @@ enum FriendlyError {
             case .transport:
                 return "We couldn't reach the server. Please try again in a moment."
             case .offline:
-                return "You're offline. Your changes weren't saved — reconnect and try again."
+                return "You're offline. Your changes weren't saved. Reconnect and try again."
             }
         }
 
@@ -75,7 +75,7 @@ enum FriendlyError {
         case 401, 403:
             return "You don't have permission to do that, or your session expired. Try signing in again."
         case 404:
-            return "We couldn't find that — it may have been removed."
+            return "We couldn't find that. It may have been removed."
         case 409:
             return "That conflicts with existing data. Refresh and try again."
         case 408, 429:

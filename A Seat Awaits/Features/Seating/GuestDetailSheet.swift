@@ -105,18 +105,20 @@ struct GuestDetailSheet: View {
         HStack(spacing: 14) {
             InitialsAvatar(name: guest.name, size: 56)
             VStack(alignment: .leading, spacing: 2) {
-                Text(guest.name)
-                    .font(.system(size: 22, weight: .heavy))
-                    .tracking(-0.2)
-                    .foregroundStyle(Brand.textPrimary)
+                TitleBadgeRow(badgeAtTrailing: true) {
+                    Text(guest.name)
+                        .font(.system(size: 22, weight: .heavy))
+                        .tracking(-0.2)
+                        .foregroundStyle(Brand.textPrimary)
+                } badge: {
+                    statusBadge
+                }
                 if let household = householdLine {
                     Text(household)
                         .font(.system(size: 14))
                         .foregroundStyle(Brand.textSecondary)
                 }
             }
-            Spacer(minLength: 8)
-            statusBadge
         }
         .padding(.top, 2)
     }
@@ -335,7 +337,7 @@ struct GuestDetailSheet: View {
         let seatedCount = SeatingLogic.occupancy(of: id, guests: store.guests)
         guard seatedCount >= capacity else { return nil }
         let over = seatedCount + 1 - capacity
-        return "\(table.name) is full — seating \(guest.name) puts it \(over) over its \(capacity) seats."
+        return "\(table.name) is full. Seating \(guest.name) puts it \(over) over its \(capacity) seats."
     }
 
     @ViewBuilder

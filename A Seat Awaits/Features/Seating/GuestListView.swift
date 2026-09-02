@@ -293,6 +293,7 @@ struct GuestRowView: View {
                 Text(guest.name)
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Brand.textPrimary)
+                    .lineLimit(1)
                 if let subtitle {
                     HStack(spacing: 6) {
                         Circle().fill(Brand.teal).frame(width: 8, height: 8)

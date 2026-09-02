@@ -25,6 +25,7 @@ import {
   paidCents,
   passTierForProduct,
   planForProduct,
+  verificationErrorDetails,
   verifyNotification,
 } from "../_shared/apple.ts";
 
@@ -49,7 +50,7 @@ Deno.serve(async (req) => {
     try {
       verified = await verifyNotification(signedPayload);
     } catch (err) {
-      logWarn(FN, cid, "signature_verify_failed", { err: String(err).slice(0, 160) });
+      logWarn(FN, cid, "signature_verify_failed", verificationErrorDetails(err));
       throw new HttpError(401, "Invalid signature.", { code: "invalid_signature" });
     }
     const { notification, transaction: tx, renewalInfo } = verified;

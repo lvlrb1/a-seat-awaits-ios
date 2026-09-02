@@ -204,13 +204,16 @@ struct PaywallView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
+                    TitleBadgeRow {
                         Text(tier.displayName)
                             .font(.system(size: 18, weight: .bold))
                             .foregroundStyle(Brand.textPrimary)
+                    } badge: {
                         if isPopular {
                             Text("Most Popular")
                                 .font(.system(size: 10, weight: .bold))
+                                .lineLimit(1)
+                                .fixedSize()
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
@@ -267,7 +270,7 @@ struct PaywallView: View {
             Text("This event has a \(from.displayName)")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(Brand.textPrimary)
-            Text("Upgrade in place — pay only the difference. Everything you've planned stays exactly as it is.")
+            Text("Upgrade in place and pay only the difference. Everything you've planned stays exactly as it is.")
                 .font(.system(size: 13))
                 .foregroundStyle(Brand.textSecondary)
                 .multilineTextAlignment(.center)

@@ -17,6 +17,8 @@ struct EventDetailView: View {
     @State private var showingAddGuest = false
     @State private var showingAddTable = false
     @State private var showingExport = false
+    /// Templates sheet with the save-name prompt pre-opened ("Save as Template").
+    @State private var showingSaveTemplate = false
     @State private var showingQRCode = false
     @State private var showingCollaborators = false
     @State private var exportingGuestList = false
@@ -62,13 +64,29 @@ struct EventDetailView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // Open the export sheet on the Tables tab when there's a plan to export.
+            // Floor-plan actions on the Tables tab once there's a plan. Editors
+            // get a menu (export + save as template); viewers keep the one-tap
+            // export button — a single-item menu would just add a tap.
             if selection == 1 && hasFloorPlan {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingExport = true } label: {
-                        Image(systemName: "square.and.arrow.up")
+                    if store.canEdit {
+                        Menu {
+                            Button { showingExport = true } label: {
+                                Label("Export & Print PDF…", systemImage: "printer")
+                            }
+                            Button { showingSaveTemplate = true } label: {
+                                Label("Save as Template…", systemImage: "square.and.arrow.down")
+                            }
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Export or save floor plan")
+                    } else {
+                        Button { showingExport = true } label: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Export floor plan as PDF")
                     }
-                    .accessibilityLabel("Export floor plan as PDF")
                 }
             }
             if store.canEdit {
@@ -86,6 +104,9 @@ struct EventDetailView: View {
         .sheet(isPresented: $showingAddTable) { AddTableView(store: store) }
         .sheet(isPresented: $showingExport) {
             ExportFloorPlanSheet(store: store)
+        }
+        .sheet(isPresented: $showingSaveTemplate) {
+            TemplatesView(store: store, promptSaveOnAppear: true)
         }
         .sheet(isPresented: $showingQRCode) {
             if let supabase = appState.supabase {
@@ -289,6 +310,8 @@ struct EventDetailView: View {
                 if !pass.isActive {
                     Text("Refunded")
                         .font(.system(size: 11, weight: .bold))
+                        .lineLimit(1)
+                        .fixedSize()
                         .foregroundStyle(Brand.danger)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Brand.danger.opacity(0.12), in: Capsule())
@@ -365,6 +388,8 @@ struct EventDetailView: View {
             if let badge {
                 Text(badge)
                     .font(.system(size: 13, weight: .bold))
+                    .lineLimit(1)
+                    .fixedSize()
                     .foregroundStyle(Brand.accent)
                     .padding(.horizontal, 8).padding(.vertical, 2)
                     .background(Brand.plumChipFill, in: Capsule())

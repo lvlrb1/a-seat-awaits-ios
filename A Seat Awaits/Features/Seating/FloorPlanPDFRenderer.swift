@@ -92,7 +92,7 @@ private nonisolated final class Renderer {
     func makeData() -> Data {
         let format = UIGraphicsPDFRendererFormat()
         format.documentInfo = [
-            kCGPDFContextTitle as String: "\(event.name) — Seating Chart",
+            kCGPDFContextTitle as String: "\(event.name) Seating Chart",
             kCGPDFContextAuthor as String: "A Seat Awaits",
         ]
         let renderer = UIGraphicsPDFRenderer(bounds: landscape, format: format)

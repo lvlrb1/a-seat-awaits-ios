@@ -5,9 +5,8 @@
 //  Owns all data access and mutation for the native Manage Account experience.
 //  Everything flows through the authenticated `SupabaseClient` (GoTrue Auth +
 //  PostgREST, RLS-enforced) — no Nuxt/web API, no service-role key, no Stripe
-//  secret. Privileged operations that can't run with a user JWT (Stripe billing,
-//  deleting `auth.users`) are not performed here; the views open a secure
-//  external page for those.
+//  secret. Privileged operations run in authenticated Edge Functions, where the
+//  service-role key remains server-side; it is never included in the app.
 //
 //  SwiftUI screens call these async methods and render `snapshot`; no database,
 //  auth, aggregation or mutation logic lives in view bodies.
@@ -40,6 +39,7 @@ final class AccountStore {
     private(set) var isChangingEmail = false
     private(set) var isChangingPassword = false
     private(set) var isExporting = false
+    private(set) var isDeletingAccount = false
 
     init(supabase: SupabaseClient, appState: AppState) {
         self.supabase = supabase
@@ -320,6 +320,38 @@ final class AccountStore {
         let exporter = GuestListExporter(supabase: supabase)
         do { return .success(try await exporter.run(event: event, now: Date())) }
         catch { return .failure(error) }
+    }
+
+    // MARK: - Account deletion
+
+    /// Permanently deletes the authenticated user through the server-side
+    /// `account-delete` function, then clears the now-invalid local session.
+    /// The function derives the user id exclusively from the verified JWT.
+    func deleteAccount(confirmation: String) async -> Result<Void, Error> {
+        guard AccountDeletion.isConfirmed(confirmation) else {
+            return .failure(Friendly("Type DELETE to confirm account deletion."))
+        }
+        guard !isDeletingAccount else {
+            return .failure(Friendly("Account deletion is already in progress."))
+        }
+
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+
+        do {
+            let response = try await supabase.invokeFunction(
+                "account-delete",
+                body: AccountDeletionRequest(confirmation: AccountDeletion.requiredPhrase),
+                as: AccountDeletionResponse.self)
+            guard response.ok else {
+                return .failure(Friendly("Your account could not be deleted. Please try again."))
+            }
+            snapshot = nil
+            await appState.didDeleteAccount()
+            return .success(())
+        } catch {
+            return .failure(error)
+        }
     }
 
     // MARK: - Errors

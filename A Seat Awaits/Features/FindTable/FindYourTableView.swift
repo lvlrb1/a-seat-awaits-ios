@@ -255,7 +255,7 @@ struct FindYourTableView: View {
     }
 
     private var noMatchHint: some View {
-        Text("No guest found by that name yet — keep typing or check the spelling.")
+        Text("No guest found by that name yet. Keep typing or check the spelling.")
             .font(.system(size: 13))
             .foregroundStyle(.white.opacity(0.65))
             .multilineTextAlignment(.center)
@@ -395,6 +395,7 @@ struct FindYourTableView: View {
             HStack(spacing: 8) {
                 Text(result.tableDescription?.nilIfBlank ?? "Seat assigned")
                     .font(.system(size: 14, weight: .bold))
+                    .lineLimit(1)
             }
             .foregroundStyle(Brand.purple)
             .padding(.horizontal, 16)

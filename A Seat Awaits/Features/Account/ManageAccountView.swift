@@ -102,10 +102,11 @@ struct ManageAccountView: View {
                     if snapshot == nil && store.isLoading {
                         ProgressView()
                     } else {
-                        HStack(spacing: 8) {
+                        TitleBadgeRow {
                             Text(planTitle)
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundStyle(Brand.textPrimary)
+                        } badge: {
                             if !policy.isFree {
                                 StatusBadge(status: policy.status)
                             }
@@ -114,6 +115,16 @@ struct ManageAccountView: View {
                             .font(.system(size: 13))
                             .foregroundStyle(Brand.textSecondary)
                             .lineLimit(1)
+                        if let passLine = passSummaryLine {
+                            HStack(spacing: 4) {
+                                Image(systemName: "ticket")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text(passLine)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(Brand.accent)
+                        }
                     }
                 }
 
@@ -121,6 +132,8 @@ struct ManageAccountView: View {
 
                 Text("Manage")
                     .font(.system(size: 13, weight: .bold))
+                    .lineLimit(1)
+                    .fixedSize()
                     .foregroundStyle(Brand.accent)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .bold))
@@ -144,8 +157,11 @@ struct ManageAccountView: View {
     }
 
     private var planSubtitle: String {
+        if policy.isPlanEnded {
+            return "Plan canceled · free limits apply"
+        }
         if policy.isAccessReducedByStatus {
-            return "Access limited — resolve billing to restore your plan"
+            return "Access limited. Resolve billing to restore your plan"
         }
         if policy.isFree, snapshot?.isLegacyFree != true {
             let ready = snapshot?.unattachedActivePasses.count ?? 0
@@ -204,6 +220,23 @@ struct ManageAccountView: View {
                                message: "Pending email change to \(pending). Check that inbox to confirm it.")
             }
         }
+    }
+
+    /// One line surfacing owned Event Passes right on the Account tab, so a
+    /// pass holder never has to open Plan & Billing to learn they have one.
+    /// Pay-per-event accounts are excluded — their subtitle already counts
+    /// passes.
+    private var passSummaryLine: String? {
+        guard let snap = snapshot else { return nil }
+        if policy.isFree && snap.isLegacyFree != true { return nil }
+        let active = snap.activePasses
+        guard !active.isEmpty else { return nil }
+        let ready = snap.unattachedActivePasses.count
+        if active.count == 1 {
+            return ready == 1 ? "1 Event Pass ready to use" : "1 Event Pass in use"
+        }
+        if ready == 0 { return "\(active.count) Event Passes in use" }
+        return "\(active.count) Event Passes · \(ready) ready to use"
     }
 
     private var emailVerified: Bool { snapshot?.authUser.isEmailVerified ?? false }

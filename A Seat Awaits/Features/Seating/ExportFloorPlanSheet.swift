@@ -93,7 +93,7 @@ struct ExportFloorPlanSheet: View {
         }
         #if canImport(UIKit)
         .sheet(item: $exported) { doc in
-            ShareSheet(items: [FloorPlanActivityItem(url: doc.url, title: "\(event.name) — Floor Plan")]) {
+            ShareSheet(items: [FloorPlanActivityItem(url: doc.url, title: "\(event.name) Floor Plan")]) {
                 dismiss()
             }
         }
@@ -153,7 +153,7 @@ struct ExportFloorPlanSheet: View {
                 Text("A polished, shareable PDF")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Brand.textPrimary)
-                Text("Your floor plan is drawn as a clean vector seating chart — tables, chairs, rooms, and decor, fit to the page and ready to print or share.")
+                Text("Your floor plan is drawn as a clean vector seating chart: tables, chairs, rooms, and decor, fit to the page and ready to print or share.")
                     .font(.system(size: 14))
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

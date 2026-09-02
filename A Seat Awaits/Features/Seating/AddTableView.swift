@@ -171,7 +171,7 @@ struct AddTableView: View {
 
     private var capacityWarningSection: some View {
         Section {
-            Label("This table already has \(seatedCount) guest\(seatedCount == 1 ? "" : "s") seated — more than the \(capacity) seats you've set. No one will be unseated, but the table will show as over capacity.",
+            Label("This table already has \(seatedCount) guest\(seatedCount == 1 ? "" : "s") seated, which is more than the \(capacity) seats you've set. No one will be unseated, but the table will show as over capacity.",
                   systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(Brand.warningText)
                 .font(.footnote)

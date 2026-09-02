@@ -28,7 +28,7 @@ struct RequestPasswordResetView: View {
                         .tracking(-0.4)
                         .foregroundStyle(Brand.textPrimary)
                     // Generic copy — no account-existence signal.
-                    Text("If an account exists for that email, we sent password-reset instructions. It can take a minute to arrive — check spam if you don't see it.")
+                    Text("If an account exists for that email, we sent password-reset instructions. It can take a minute to arrive, so check spam if you don't see it.")
                         .font(.system(size: 15))
                         .lineSpacing(3)
                         .foregroundStyle(Brand.textSecondary)

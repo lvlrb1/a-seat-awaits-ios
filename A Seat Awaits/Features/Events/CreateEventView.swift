@@ -174,8 +174,8 @@ struct CreateEventView: View {
                 }
 
                 Text(unattachedPasses.count == 1
-                     ? "It attaches to this event automatically when you create it — no extra checkout step. Covers up to \(pass.guestCap.formatted()) guests."
-                     : "Choose which pass covers this event. It attaches when you create it — no extra checkout step.")
+                     ? "It attaches to this event automatically when you create it, with no extra checkout step. Covers up to \(pass.guestCap.formatted()) guests."
+                     : "Choose which pass covers this event. It attaches when you create it, with no extra checkout step.")
                     .font(.system(size: 13))
                     .foregroundStyle(Brand.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -210,7 +210,7 @@ struct CreateEventView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(isSelected ? Brand.accent : Brand.slate300)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(option.tierDisplayName) — up to \(option.guestCap.formatted()) guests")
+                    Text("\(option.tierDisplayName) · up to \(option.guestCap.formatted()) guests")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Brand.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)

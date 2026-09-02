@@ -51,6 +51,14 @@ struct SubscriptionSummaryView: View {
             } else {
                 VStack(spacing: 16) {
                     switch presentation {
+                    case .paid where policy.isPlanEnded:
+                        // The plan is over for good — one compact card says so,
+                        // and the passes the user still owns take center stage.
+                        endedPlanCard
+                        passesCard
+                        upgradeCard
+                        billingActionsCard
+                        disclaimer
                     case .paid:
                         paidPlanCard
                         if policy.isAccessReducedByStatus || policy.status.hasPaymentIssue {
@@ -110,18 +118,18 @@ struct SubscriptionSummaryView: View {
 
     private var paidPlanCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 4) {
+                TitleBadgeRow(badgeAtTrailing: true) {
                     Text("\(policy.planDisplayName) plan")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(Brand.textPrimary)
-                    Text(policy.nominalTier.tagline)
-                        .font(.system(size: 14))
-                        .foregroundStyle(Brand.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                } badge: {
+                    StatusBadge(status: policy.status)
                 }
-                Spacer()
-                StatusBadge(status: policy.status)
+                Text(policy.nominalTier.tagline)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Brand.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if subscription?.isCanceling == true {
@@ -135,20 +143,56 @@ struct SubscriptionSummaryView: View {
         .brandCard()
     }
 
+    // MARK: - Plan header (plan ended)
+
+    /// Compact header for a plan that ended for good: name, badge, and one
+    /// sentence covering when it ended and what applies now. Replaces the hero
+    /// card + warning banner + dates card + feature checklist, which spent a
+    /// screen of space describing a plan the user no longer has.
+    private var endedPlanCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TitleBadgeRow(badgeAtTrailing: true) {
+                Text("\(policy.planDisplayName) plan")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(Brand.textPrimary)
+            } badge: {
+                StatusBadge(status: policy.status)
+            }
+            Text(endedSummaryText)
+                .font(.system(size: 14))
+                .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .brandCard()
+    }
+
+    private var endedSummaryText: String {
+        let hasPasses = !(snapshot?.activePasses.isEmpty ?? true)
+        let tail = hasPasses
+            ? "Free limits apply until you subscribe again, but your Event Passes keep working."
+            : "Free limits apply until you subscribe again."
+        if let canceled = AccountDate.medium(subscription?.canceledAt) {
+            return "Canceled on \(canceled). \(tail)"
+        }
+        return "This plan is no longer active. \(tail)"
+    }
+
     // MARK: - Plan header (legacy Free)
 
     /// Grandfathered early members keep the old Free plan. This is the only
     /// account shape that still has a "Free plan" — say so warmly and clearly.
     private var legacyFreeCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
+            TitleBadgeRow(badgeAtTrailing: true) {
                 Text("Free plan")
                     .font(.system(size: 22, weight: .bold))
                     .foregroundStyle(Brand.textPrimary)
-                Spacer()
+            } badge: {
                 pill("EARLY MEMBER")
             }
-            Text("As a thank-you for being an early member, your Free plan is yours to keep at no cost — 1 event with up to 25 guests.")
+            Text("As a thank-you for being an early member, your Free plan is yours to keep at no cost: 1 event with up to 25 guests.")
                 .font(.system(size: 14))
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -170,7 +214,7 @@ struct SubscriptionSummaryView: View {
                     .foregroundStyle(Brand.textPrimary)
                 Spacer()
             }
-            Text("No subscription needed. Buy a one-time Event Pass for each event you plan — or go Pro if you plan events for a living.")
+            Text("No subscription needed. Buy a one-time Event Pass for each event you plan, or go Pro if you plan events for a living.")
                 .font(.system(size: 14))
                 .foregroundStyle(Brand.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -258,7 +302,7 @@ struct SubscriptionSummaryView: View {
                     }
                 }
 
-                Text("A pass never expires — it covers one event for good.")
+                Text("A pass never expires. It covers one event for good.")
                     .font(.system(size: 12))
                     .foregroundStyle(Brand.slate400)
             }
@@ -295,7 +339,7 @@ struct SubscriptionSummaryView: View {
     /// The one sentence that explains this pass's state in plain words.
     private func passStatusLine(_ pass: EventPass) -> String {
         guard pass.isActive else {
-            return "Refunded — no longer covers an event."
+            return "Refunded. It no longer covers an event."
         }
         if pass.isAttached {
             if let name = pass.attachedEventName {
@@ -333,6 +377,8 @@ struct SubscriptionSummaryView: View {
         Text(text)
             .font(.system(size: 11, weight: .heavy))
             .tracking(0.5)
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(fg)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
@@ -397,7 +443,7 @@ struct SubscriptionSummaryView: View {
                 howItWorksRow(icon: "ticket",
                               text: "One pass covers one event, from an intimate dinner to a 500-guest wedding. It never expires.")
                 howItWorksRow(icon: "calendar.badge.plus",
-                              text: "A Ready pass attaches automatically to the next event you create — no extra step.")
+                              text: "A Ready pass attaches automatically to the next event you create. No extra steps.")
                 howItWorksRow(icon: "person.2",
                               text: "Events shared with you are always free to join as a collaborator.")
             }

@@ -287,6 +287,8 @@ struct EventCollaboratorsView: View {
                     HStack(spacing: 6) {
                         Text("Pending • \(person.role.label)")
                             .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize()
                             .foregroundStyle(Brand.warningText)
                             .padding(.horizontal, 8).padding(.vertical, 3)
                             .background(Brand.warningFill, in: Capsule())

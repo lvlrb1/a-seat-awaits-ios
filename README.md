@@ -46,6 +46,29 @@ The anon key is a public client credential; row-level security (RLS) is the
 security boundary. Never put a service-role key, Stripe secret, or any server
 credential in these files.
 
+### StoreKit backend configuration
+
+The Dev scheme uses `Config/Products.storekit`, so its transactions have the
+`Xcode` environment and the development bundle id. Configure the **staging
+Supabase project only** with:
+
+```text
+APPLE_BUNDLE_ID=heartlineeventsolutionsllc.A-Seat-Awaits.dev
+APPLE_ACCEPT_ENVIRONMENTS=Sandbox,Xcode
+```
+
+Locally generated Xcode transactions aren't signed by the App Store, so this
+staging-only path skips signature verification. Never enable `Xcode` in
+production. Production should use the release bundle id, its numeric App Store
+app id in `APPLE_APP_APPLE_ID`, and:
+
+```text
+APPLE_ACCEPT_ENVIRONMENTS=Production,Sandbox
+```
+
+After changing these values, redeploy `apple-pass-sync`, `apple-iap-sync`, and
+`apple-webhook` to the matching Supabase project.
+
 ## Open & run
 
 ```bash

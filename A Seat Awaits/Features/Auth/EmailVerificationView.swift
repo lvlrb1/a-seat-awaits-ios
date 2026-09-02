@@ -75,7 +75,7 @@ struct EmailVerificationView: View {
                 }
                 .padding(.top, 28)
 
-                Button("I've verified — Sign in") {
+                Button("I've verified, sign me in") {
                     onContinueToSignIn()
                 }
                 .font(.system(size: 15, weight: .semibold))
